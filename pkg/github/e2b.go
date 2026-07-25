@@ -1257,7 +1257,7 @@ func E2BReadFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 			},
 		},
 		[]scopes.Scope{},
-		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		func(_ context.Context, _ ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			path, err := RequiredParam[string](args, "path")
 			if err != nil {
 				return utils.NewToolResultError(err.Error()), nil, nil
@@ -1417,7 +1417,7 @@ func E2BWriteFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 			},
 		},
 		[]scopes.Scope{},
-		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		func(_ context.Context, _ ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			path, err := RequiredParam[string](args, "path")
 			if err != nil {
 				return utils.NewToolResultError(err.Error()), nil, nil
@@ -1577,7 +1577,7 @@ func E2BListDir(t translations.TranslationHelperFunc) inventory.ServerTool {
 			},
 		},
 		[]scopes.Scope{},
-		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		func(_ context.Context, _ ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			path, _ := OptionalParam[string](args, "path")
 			if path == "" {
 				path = "/home/user"
@@ -1723,7 +1723,7 @@ func E2BKillSandbox(t translations.TranslationHelperFunc) inventory.ServerTool {
 			},
 		},
 		[]scopes.Scope{},
-		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		func(_ context.Context, _ ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			sandboxID, err := RequiredParam[string](args, "sandbox_id")
 			if err != nil {
 				return utils.NewToolResultError(err.Error()), nil, nil
