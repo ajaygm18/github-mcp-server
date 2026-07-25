@@ -40,7 +40,10 @@ func pyBool(b bool) string {
 }
 
 func runE2BPythonScript(apiKey, pyCode string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	// Heroku router enforces a strict 30-second H12 timeout on all HTTP requests.
+	// We set a 24-second server-side timeout so we intercept execution BEFORE
+	// Heroku cuts the connection and outputs an HTML 503 error page.
+	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "python3", "-c", pyCode)
@@ -51,6 +54,17 @@ func runE2BPythonScript(apiKey, pyCode string) (string, error) {
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		partialOut := strings.TrimSpace(stdout.String())
+		if partialOut == "" {
+			partialOut = strings.TrimSpace(stderr.String())
+		}
+		return fmt.Sprintf("E2B Command Timed Out (Reached 24s Heroku Safety Limit).\n" +
+			"Note: Heroku HTTP router enforces a strict 30s timeout on web requests.\n" +
+			"For long builds or compilation, set 'background': true on e2b_run_command, or break commands into smaller steps.\n" +
+			"Partial Output Collected:\n%s", partialOut), nil
+	}
+
 	if err != nil {
 		errStr := stderr.String()
 		if errStr == "" {
@@ -175,6 +189,10 @@ func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 						Type:        "boolean",
 						Description: "Set true to keep the sandbox alive for subsequent commands instead of auto-killing it",
 					},
+					"background": {
+						Type:        "boolean",
+						Description: "Set true for long-running builds/compilations to run in background asynchronously without blocking or timing out",
+					},
 					"api_key": {
 						Type:        "string",
 						Description: "Optional E2B API Key.",
@@ -191,6 +209,7 @@ func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 			}
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
+			background, _ := OptionalParam[bool](args, "background")
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
@@ -202,8 +221,9 @@ from e2b import Sandbox
 cmd_to_run = %s
 sbx_id = %s
 keep_alive = %s
+is_background = %s
 
-is_persistent = bool(sbx_id) or keep_alive
+is_persistent = bool(sbx_id) or keep_alive or is_background
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -213,15 +233,19 @@ else:
     sbx = Sandbox.create()
 
 try:
-    res = sbx.commands.run(cmd_to_run)
-    out = res.stdout
-    if res.stderr:
-        out += "\nSTDERR:\n" + res.stderr
-    print(f"[sandbox_id: {sbx.sandbox_id}]\n" + out)
+    if is_background:
+        res = sbx.commands.run(cmd_to_run, background=True)
+        print(f"[sandbox_id: {sbx.sandbox_id}]\nCommand successfully launched in background!\nProcess PID: {res.pid}")
+    else:
+        res = sbx.commands.run(cmd_to_run)
+        out = res.stdout
+        if res.stderr:
+            out += "\nSTDERR:\n" + res.stderr
+        print(f"[sandbox_id: {sbx.sandbox_id}]\n" + out)
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(command), escapePyString(sandboxID), pyBool(keepAlive))
+`, escapePyString(command), escapePyString(sandboxID), pyBool(keepAlive), pyBool(background))
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {

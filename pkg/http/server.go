@@ -189,6 +189,8 @@ func RunHTTPServer(cfg ServerConfig) error {
 		return fmt.Errorf("failed to create OAuth handler: %w", err)
 	}
 
+	r.Use(jsonRPCRecoveryMiddleware(logger))
+
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.SetCorsHeaders)
 
@@ -280,5 +282,22 @@ func createHTTPFeatureChecker(enabledFeatures []string, insidersMode bool) inven
 
 		effective := github.ResolveFeatureFlags(features, insidersMode || ghcontext.IsInsidersMode(ctx))
 		return effective[flag], nil
+	}
+}
+
+// jsonRPCRecoveryMiddleware ensures any panic or handler crash returns clean JSON-RPC, never HTML.
+func jsonRPCRecoveryMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if err := recover(); err != nil {
+					logger.Error("panic recovered in MCP HTTP server", "panic", err)
+					w.Header().Set("Content-Type", "application/json; charset=utf-8")
+					w.WriteHeader(http.StatusOK)
+					fmt.Fprintf(w, `{"jsonrpc":"2.0","error":{"code":-32603,"message":"Internal Server Error: %v"},"id":1}`+"\n", err)
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
 	}
 }
