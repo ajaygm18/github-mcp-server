@@ -273,7 +273,8 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
-			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
+			ttlSecondsFloat, _ := OptionalParam[float64](args, "ttl_seconds")
+			ttlSeconds := int(ttlSecondsFloat)
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
@@ -464,7 +465,8 @@ func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
 			background, _ := OptionalParam[bool](args, "background")
-			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
+			ttlSecondsFloat, _ := OptionalParam[float64](args, "ttl_seconds")
+			ttlSeconds := int(ttlSecondsFloat)
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
@@ -757,7 +759,8 @@ func E2BDesktopScreenshot(t translations.TranslationHelperFunc) inventory.Server
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
-			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
+			ttlSecondsFloat, _ := OptionalParam[float64](args, "ttl_seconds")
+			ttlSeconds := int(ttlSecondsFloat)
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
@@ -934,7 +937,8 @@ func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool 
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
-			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
+			ttlSecondsFloat, _ := OptionalParam[float64](args, "ttl_seconds")
+			ttlSeconds := int(ttlSecondsFloat)
 
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
@@ -1100,7 +1104,8 @@ func E2BDesktopType(t translations.TranslationHelperFunc) inventory.ServerTool {
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
-			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
+			ttlSecondsFloat, _ := OptionalParam[float64](args, "ttl_seconds")
+			ttlSeconds := int(ttlSecondsFloat)
 
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
@@ -1260,7 +1265,8 @@ func E2BReadFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
-			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
+			ttlSecondsFloat, _ := OptionalParam[float64](args, "ttl_seconds")
+			ttlSeconds := int(ttlSecondsFloat)
 
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
@@ -1423,7 +1429,8 @@ func E2BWriteFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
-			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
+			ttlSecondsFloat, _ := OptionalParam[float64](args, "ttl_seconds")
+			ttlSeconds := int(ttlSecondsFloat)
 
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
@@ -1578,7 +1585,8 @@ func E2BListDir(t translations.TranslationHelperFunc) inventory.ServerTool {
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
-			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
+			ttlSecondsFloat, _ := OptionalParam[float64](args, "ttl_seconds")
+			ttlSeconds := int(ttlSecondsFloat)
 
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
