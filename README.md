@@ -595,6 +595,7 @@ The following sets of tools are available:
 | <picture><source media="(prefers-color-scheme: dark)" srcset="pkg/octicons/icons/copilot-dark.png"><source media="(prefers-color-scheme: light)" srcset="pkg/octicons/icons/copilot-light.png"><img src="pkg/octicons/icons/copilot-light.png" width="20" height="20" alt="copilot"></picture> | `copilot_issue_intents` | Opt-in Copilot issue assignment tools that carry intent metadata (rationale, confidence, suggestion) |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="pkg/octicons/icons/dependabot-dark.png"><source media="(prefers-color-scheme: light)" srcset="pkg/octicons/icons/dependabot-light.png"><img src="pkg/octicons/icons/dependabot-light.png" width="20" height="20" alt="dependabot"></picture> | `dependabot` | Dependabot tools |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="pkg/octicons/icons/comment-discussion-dark.png"><source media="(prefers-color-scheme: light)" srcset="pkg/octicons/icons/comment-discussion-light.png"><img src="pkg/octicons/icons/comment-discussion-light.png" width="20" height="20" alt="comment-discussion"></picture> | `discussions` | GitHub Discussions related tools |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="pkg/octicons/icons/tools-dark.png"><source media="(prefers-color-scheme: light)" srcset="pkg/octicons/icons/tools-light.png"><img src="pkg/octicons/icons/tools-light.png" width="20" height="20" alt="tools"></picture> | `e2b` | Official E2B Cloud Desktop Sandbox, VNC Stream, File Manager, and Code Interpreter tools supporting single-shot and persistent multi-command sandbox sessions. Always use e2b_list_sandboxes to audit for active sandboxes. |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="pkg/octicons/icons/logo-gist-dark.png"><source media="(prefers-color-scheme: light)" srcset="pkg/octicons/icons/logo-gist-light.png"><img src="pkg/octicons/icons/logo-gist-light.png" width="20" height="20" alt="logo-gist"></picture> | `gists` | GitHub Gist related tools |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="pkg/octicons/icons/git-branch-dark.png"><source media="(prefers-color-scheme: light)" srcset="pkg/octicons/icons/git-branch-light.png"><img src="pkg/octicons/icons/git-branch-light.png" width="20" height="20" alt="git-branch"></picture> | `git` | GitHub Git API related tools for low-level Git operations |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="pkg/octicons/icons/issue-opened-dark.png"><source media="(prefers-color-scheme: light)" srcset="pkg/octicons/icons/issue-opened-light.png"><img src="pkg/octicons/icons/issue-opened-light.png" width="20" height="20" alt="issue-opened"></picture> | `issues` | GitHub Issues related tools |
@@ -842,6 +843,88 @@ The following sets of tools are available:
   - `owner`: Repository owner (string, required)
   - `perPage`: Results per page for pagination (min 1, max 100) (number, optional)
   - `repo`: Repository name. If not provided, discussions will be queried at the organisation level. (string, optional)
+
+</details>
+
+<details>
+
+<summary><picture><source media="(prefers-color-scheme: dark)" srcset="pkg/octicons/icons/tools-dark.png"><source media="(prefers-color-scheme: light)" srcset="pkg/octicons/icons/tools-light.png"><img src="pkg/octicons/icons/tools-light.png" width="20" height="20" alt="tools"></picture> E2b</summary>
+
+- **e2b_desktop_click** - Click on E2B Desktop
+  - `action`: Action: 'left', 'right', 'double', or 'middle' (default 'left') (string, optional)
+  - `api_key`: Optional E2B API Key. (string, optional)
+  - `keep_alive`: Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished. (boolean, optional)
+  - `new_sandbox`: Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox. (boolean, optional)
+  - `sandbox_id`: Existing E2B sandbox ID to reuse. Omitting it reuses the most recent active sandbox unless new_sandbox is true. (string, optional)
+  - `ttl_seconds`: Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed. (integer, optional)
+  - `x`: X coordinate (0-1024) (integer, required)
+  - `y`: Y coordinate (0-768) (integer, required)
+
+- **e2b_desktop_screenshot** - Take E2B Desktop Screenshot
+  - `api_key`: Optional E2B API Key. (string, optional)
+  - `keep_alive`: Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished. (boolean, optional)
+  - `new_sandbox`: Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox. (boolean, optional)
+  - `sandbox_id`: Existing E2B sandbox ID to reuse. Omitting it reuses the most recent active sandbox unless new_sandbox is true. (string, optional)
+  - `ttl_seconds`: Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed. (integer, optional)
+
+- **e2b_desktop_type** - Type on E2B Desktop
+  - `api_key`: Optional E2B API Key. (string, optional)
+  - `keep_alive`: Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished. (boolean, optional)
+  - `key`: Key to press (e.g. 'enter', 'tab', 'backspace', 'ctrl', 'alt') (string, optional)
+  - `new_sandbox`: Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox. (boolean, optional)
+  - `sandbox_id`: Existing E2B sandbox ID to reuse. Omitting it reuses the most recent active sandbox unless new_sandbox is true. (string, optional)
+  - `text`: Text string to type onto desktop (string, optional)
+  - `ttl_seconds`: Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed. (integer, optional)
+
+- **e2b_kill_sandbox** - Kill E2B Sandbox
+  - `api_key`: Optional E2B API Key. (string, optional)
+  - `sandbox_id`: The E2B sandbox ID to terminate (string, required)
+
+- **e2b_list_dir** - List Directory in E2B Sandbox
+  - `api_key`: Optional E2B API Key. (string, optional)
+  - `keep_alive`: Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished. (boolean, optional)
+  - `new_sandbox`: Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox. (boolean, optional)
+  - `path`: Directory path (defaults to '/home/user') (string, optional)
+  - `sandbox_id`: Existing E2B sandbox ID to reuse. Omitting it reuses the most recent active sandbox unless new_sandbox is true. (string, optional)
+  - `ttl_seconds`: Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed. (integer, optional)
+
+- **e2b_list_sandboxes** - List E2B Sandboxes
+  - `api_key`: Optional E2B API Key. (string, optional)
+  - `ttl_seconds`: Optional maximum allowed idle TTL in seconds before sandboxes are automatically destroyed. (integer, optional)
+
+- **e2b_read_file** - Read File from E2B Sandbox
+  - `api_key`: Optional E2B API Key. (string, optional)
+  - `keep_alive`: Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished. (boolean, optional)
+  - `new_sandbox`: Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox. (boolean, optional)
+  - `path`: Absolute file path inside the sandbox (string, required)
+  - `sandbox_id`: Existing E2B sandbox ID to reuse. Omitting it reuses the most recent active sandbox unless new_sandbox is true. (string, optional)
+  - `ttl_seconds`: Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed. (integer, optional)
+
+- **e2b_run_code** - Run Code in E2B Sandbox
+  - `api_key`: Optional E2B API Key. (string, optional)
+  - `code`: The Python code to execute in the E2B sandbox (string, required)
+  - `keep_alive`: Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished. (boolean, optional)
+  - `new_sandbox`: Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox. (boolean, optional)
+  - `sandbox_id`: Existing E2B sandbox ID to reuse. If you created a sandbox earlier in this session, you must pass its ID here. Omitting it reuses the most recent active sandbox unless new_sandbox is true. (string, optional)
+  - `ttl_seconds`: Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed. (integer, optional)
+
+- **e2b_run_command** - Run Command in E2B
+  - `api_key`: Optional E2B API Key. (string, optional)
+  - `background`: Set true for long-running builds/compilations to run in background asynchronously without blocking or timing out (boolean, optional)
+  - `command`: The terminal command to execute (string, required)
+  - `keep_alive`: Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished. (boolean, optional)
+  - `new_sandbox`: Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox. (boolean, optional)
+  - `sandbox_id`: Existing E2B sandbox ID to reuse. If you created a sandbox earlier in this session, you must pass its ID here. Omitting it reuses the most recent active sandbox unless new_sandbox is true. (string, optional)
+  - `ttl_seconds`: Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed. (integer, optional)
+
+- **e2b_write_file** - Write File in E2B Sandbox
+  - `api_key`: Optional E2B API Key. (string, optional)
+  - `content`: Text content to write to the file (string, required)
+  - `keep_alive`: Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished. (boolean, optional)
+  - `new_sandbox`: Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox. (boolean, optional)
+  - `path`: Absolute file path inside the sandbox (string, required)
+  - `sandbox_id`: Existing E2B sandbox ID to reuse. Omitting it reuses the most recent active sandbox unless new_sandbox is true. (string, optional)
+  - `ttl_seconds`: Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed. (integer, optional)
 
 </details>
 
