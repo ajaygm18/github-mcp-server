@@ -18,6 +18,7 @@ bin/
 
 # binary
 /github-mcp-server
+*.exe
 /mcpcurl
 /e2e.test
 

@@ -8,4 +8,4 @@ run:
   # toolset is not enabled on GitHub's hosted endpoint.
   # --trust-proxy-headers is correct here because the Heroku router terminates
   # TLS and sets X-Forwarded-Proto.
-  web: /server/github-mcp-server http --port $PORT --toolsets=default,actions --trust-proxy-headers
+  web: /server/github-mcp-server http --port $PORT --toolsets=default,actions,e2b --trust-proxy-headers
