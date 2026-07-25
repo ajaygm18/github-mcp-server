@@ -325,9 +325,15 @@ func AllTools(t translations.TranslationHelperFunc) []inventory.ServerTool {
 		// UI tools (insiders only)
 		UIGet(t),
 
-		// E2B Sandbox tools
+		// E2B Sandbox & Desktop GUI tools
 		E2BRunCode(t),
 		E2BRunCommand(t),
+		E2BReadFile(t),
+		E2BWriteFile(t),
+		E2BListDir(t),
+		E2BDesktopScreenshot(t),
+		E2BDesktopClick(t),
+		E2BDesktopType(t),
 
 		// Granular issue tools (feature-flagged, replace consolidated issue_write/sub_issue_write)
 		GranularCreateIssue(t),
