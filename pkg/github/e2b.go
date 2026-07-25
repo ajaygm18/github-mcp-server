@@ -918,14 +918,15 @@ func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool 
 		},
 		[]scopes.Scope{},
 		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
-			x, err := RequiredParam[int](args, "x")
+			xf, err := RequiredParam[float64](args, "x")
 			if err != nil {
 				return utils.NewToolResultError(err.Error()), nil, nil
 			}
-			y, err := RequiredParam[int](args, "y")
+			yf, err := RequiredParam[float64](args, "y")
 			if err != nil {
 				return utils.NewToolResultError(err.Error()), nil, nil
 			}
+			x, y := int(xf), int(yf)
 			action, _ := OptionalParam[string](args, "action")
 			if action == "" {
 				action = "left"
@@ -1626,7 +1627,12 @@ try:
         pass
 
     files = sbx.files.list(path)
-    res = [f"{f.name} ({'dir' if f.is_dir else 'file'})" for f in files]
+    def _entry_kind(entry):
+        raw = getattr(entry, "type", None)
+        raw = getattr(raw, "value", raw)
+        return "dir" if str(raw).lower().endswith("dir") else "file"
+
+    res = [f"{f.name} ({_entry_kind(f)})" for f in files]
     is_persistent = bool(sbx_id) or keep_alive or reused_existing
     res_payload = {
         "status": "success",
