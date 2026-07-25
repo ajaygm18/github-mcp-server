@@ -10,7 +10,7 @@ The GitHub MCP Server connects AI tools directly to GitHub's platform. This give
 - Issue & PR Automation: Create, update, and manage issues and pull requests. Let AI help triage bugs, review code changes, and maintain project boards.
 - CI/CD & Workflow Intelligence: Monitor GitHub Actions workflow runs, analyze build failures, manage releases, and get insights into your development pipeline.
 - Code Analysis: Examine security findings, review Dependabot alerts, understand code patterns, and get comprehensive insights into your codebase.
-- Team Collaboration: Access discussions, manage notifications, analyze team activity, and streamline processes for your team.
+- E2B Cloud Sandbox & Desktop Automation: Run Python/Shell code, execute sandbox terminal commands, manage files, and perform visual desktop GUI automation (clicks, keypresses, live noVNC stream) in isolated E2B cloud sandboxes.
 
 Built for developers who want to connect their AI tools to GitHub context and capabilities, from simple natural language queries to complex multi-step agent workflows.
 
