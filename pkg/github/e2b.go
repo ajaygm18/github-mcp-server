@@ -114,10 +114,10 @@ except Exception:
 `, idleMinutes)
 
 	out, err := runE2BPythonScript(apiKey, pyScript)
-	if err == nil && strings.Contains(out, "REAPED:") {
-		idx := strings.Index(out, "REAPED:")
+	_, reapedJSON, foundReaped := strings.Cut(out, "REAPED:")
+	if err == nil && foundReaped {
 		var reaped []string
-		_ = json.Unmarshal([]byte(out[idx+len("REAPED:"):]), &reaped)
+		_ = json.Unmarshal([]byte(reapedJSON), &reaped)
 		for _, id := range reaped {
 			slog.Info("[E2B Idle Reaper] Auto-destroyed expired sandbox", "sandbox_id", id)
 			clearLastActiveSandboxID(id)
@@ -265,7 +265,7 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 			},
 		},
 		[]scopes.Scope{},
-		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		func(_ context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			code, err := RequiredParam[string](args, "code")
 			if err != nil {
 				return utils.NewToolResultError(err.Error()), nil, nil
@@ -456,7 +456,7 @@ func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 			},
 		},
 		[]scopes.Scope{},
-		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		func(_ context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			command, err := RequiredParam[string](args, "command")
 			if err != nil {
 				return utils.NewToolResultError(err.Error()), nil, nil
@@ -639,7 +639,7 @@ func E2BListSandboxes(t translations.TranslationHelperFunc) inventory.ServerTool
 			},
 		},
 		[]scopes.Scope{},
-		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		func(_ context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
