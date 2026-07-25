@@ -171,8 +171,10 @@ func (h *Handler) dispatchWSJSONRPC(r *http.Request, payload []byte) []byte {
 
 		argsBytes, _ := json.Marshal(callParams.Arguments)
 		callReq := &mcp.CallToolRequest{}
-		callReq.Params.Name = callParams.Name
-		callReq.Params.Arguments = argsBytes
+		callReq.Params = &mcp.CallToolParamsRaw{
+			Name:      callParams.Name,
+			Arguments: argsBytes,
+		}
 
 		// Instantiate tool handler with request dependencies
 		handler := targetTool.Handler(h.deps)
