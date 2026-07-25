@@ -1296,6 +1296,16 @@ The following sets of tools are available:
   - `path`: Path to the file to delete (string, required)
   - `repo`: Repository name (string, required)
 
+- **edit_file** - Edit file
+  - **Required OAuth Scopes**: `repo`
+  - `branch`: Branch to read from and commit to. Defaults to the repository's default branch (string, optional)
+  - `dry_run`: Validate the edits and return the diff without creating a commit. Default false (boolean, optional)
+  - `edits`: Ordered list of replacements to apply. Each edit is applied to the result of the previous one (object[], required)
+  - `message`: Commit message. Required unless dry_run is true (string, optional)
+  - `owner`: Repository owner (username or organization) (string, required)
+  - `path`: Path to the file to edit, relative to the repository root (string, required)
+  - `repo`: Repository name (string, required)
+
 - **fork_repository** - Fork repository
   - **Required OAuth Scopes**: `repo`
   - `organization`: Organization to fork to (string, optional)
