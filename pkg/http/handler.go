@@ -141,6 +141,9 @@ func (h *Handler) RegisterMiddleware(r chi.Router) {
 // RegisterRoutes registers the routes for the MCP server
 // URL-based values take precedence over header-based values
 func (h *Handler) RegisterRoutes(r chi.Router) {
+	// WebSocket endpoint for persistent connection clients
+	r.Get("/ws", h.ServeWebSocket)
+
 	// Base routes
 	r.Mount("/", h)
 	r.With(withReadonly).Mount("/readonly", h)
@@ -152,9 +155,6 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.With(withToolset, withReadonly).Mount("/x/{toolset}/readonly", h)
 	r.With(withToolset, withInsiders).Mount("/x/{toolset}/insiders", h)
 	r.With(withToolset, withReadonly, withInsiders).Mount("/x/{toolset}/readonly/insiders", h)
-
-	// WebSocket endpoint for persistent connection clients
-	r.Get("/ws", h.ServeWebSocket)
 }
 
 // withReadonly is middleware that sets readonly mode in the request context
