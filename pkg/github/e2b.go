@@ -22,7 +22,7 @@ import (
 
 var ToolsetMetadataE2B = inventory.ToolsetMetadata{
 	ID:          "e2b",
-	Description: "E2B Cloud Sandbox, Desktop GUI, File Manager, and Code Execution tools for running Python, Shell, and GUI Desktop automation in isolated cloud sandboxes",
+	Description: "Official E2B Cloud Desktop Sandbox, VNC Stream, File Manager, and Code Interpreter tools for running Python, Shell, and Linux GUI Desktop automation",
 	Default:     true,
 	Icon:        "terminal",
 }
@@ -46,6 +46,42 @@ type e2bCommandResponse struct {
 	ExitCode int    `json:"exitCode"`
 }
 
+var keyMap = map[string]string{
+	"alt":          "Alt_L",
+	"alt_left":     "Alt_L",
+	"alt_right":    "Alt_R",
+	"backspace":    "BackSpace",
+	"caps_lock":    "Caps_Lock",
+	"cmd":          "Super_L",
+	"command":      "Super_L",
+	"control":      "Control_L",
+	"ctrl":         "Control_L",
+	"del":          "Delete",
+	"delete":       "Delete",
+	"down":         "Down",
+	"enter":        "Return",
+	"esc":          "Escape",
+	"escape":       "Escape",
+	"home":         "Home",
+	"left":         "Left",
+	"page_down":    "Page_Down",
+	"page_up":      "Page_Up",
+	"right":        "Right",
+	"shift":        "Shift_L",
+	"space":        "space",
+	"tab":          "Tab",
+	"up":           "Up",
+	"win":          "Super_L",
+}
+
+func mapKey(k string) string {
+	lower := strings.ToLower(k)
+	if mapped, ok := keyMap[lower]; ok {
+		return mapped
+	}
+	return k
+}
+
 func getE2BAPIKey(args map[string]any) string {
 	if apiKey, ok := args["api_key"].(string); ok && apiKey != "" {
 		return apiKey
@@ -53,35 +89,40 @@ func getE2BAPIKey(args map[string]any) string {
 	return os.Getenv("E2B_API_KEY")
 }
 
-func executeE2BSandboxCommand(apiKey, command string) (string, string, error) {
+// Executes command in E2B official "desktop" or "base" sandbox template
+func executeE2BOfficialCommand(apiKey, templateID, command string) (string, string, string, error) {
 	client := &http.Client{Timeout: 90 * time.Second}
 
-	// 1. Create Sandbox
-	createReqBody, _ := json.Marshal(e2bCreateSandboxRequest{TemplateID: "base"})
+	if templateID == "" {
+		templateID = "desktop"
+	}
+
+	// 1. Create Sandbox using official templateID
+	createReqBody, _ := json.Marshal(e2bCreateSandboxRequest{TemplateID: templateID})
 	req, err := http.NewRequest("POST", "https://api.e2b.dev/sandboxes", bytes.NewBuffer(createReqBody))
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create request: %w", err)
+		return "", "", "", fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("X-API-Key", apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create sandbox: %w", err)
+		return "", "", "", fmt.Errorf("failed to create sandbox: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
-		return "", "", fmt.Errorf("E2B API error (%d): %s", resp.StatusCode, string(body))
+		return "", "", "", fmt.Errorf("E2B API error (%d): %s", resp.StatusCode, string(body))
 	}
 
 	var sbxRes e2bCreateSandboxResponse
 	if err := json.NewDecoder(resp.Body).Decode(&sbxRes); err != nil {
-		return "", "", fmt.Errorf("failed to decode sandbox response: %w", err)
+		return "", "", "", fmt.Errorf("failed to decode sandbox response: %w", err)
 	}
 
-	// Defer deleting sandbox after execution
+	// Defer deleting sandbox after command completion
 	defer func() {
 		delReq, _ := http.NewRequest("DELETE", fmt.Sprintf("https://api.e2b.dev/sandboxes/%s", sbxRes.SandboxID), nil)
 		delReq.Header.Set("X-API-Key", apiKey)
@@ -91,50 +132,46 @@ func executeE2BSandboxCommand(apiKey, command string) (string, string, error) {
 		}
 	}()
 
-	// 2. Execute command via REST fallback or envd
-	return runE2BCommandFallback(client, apiKey, sbxRes.SandboxID, command)
-}
-
-func runE2BCommandFallback(client *http.Client, apiKey, sandboxID, command string) (string, string, error) {
+	// 2. Execute command via REST command endpoint
 	cmdReqBody, _ := json.Marshal(e2bCommandRequest{Cmd: command})
-	cmdURL := fmt.Sprintf("https://api.e2b.dev/sandboxes/%s/commands", sandboxID)
+	cmdURL := fmt.Sprintf("https://api.e2b.dev/sandboxes/%s/commands", sbxRes.SandboxID)
 	cmdReq, err := http.NewRequest("POST", cmdURL, bytes.NewBuffer(cmdReqBody))
 	if err != nil {
-		return "", "", fmt.Errorf("failed to create command request: %w", err)
+		return "", "", sbxRes.SandboxID, fmt.Errorf("failed to create command request: %w", err)
 	}
 	cmdReq.Header.Set("X-API-Key", apiKey)
 	cmdReq.Header.Set("Content-Type", "application/json")
 
 	cmdResp, err := client.Do(cmdReq)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to execute command: %w", err)
+		return "", "", sbxRes.SandboxID, fmt.Errorf("failed to execute command: %w", err)
 	}
 	defer cmdResp.Body.Close()
 
 	body, err := io.ReadAll(cmdResp.Body)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to read response: %w", err)
+		return "", "", sbxRes.SandboxID, fmt.Errorf("failed to read command response: %w", err)
 	}
 
 	if cmdResp.StatusCode != http.StatusOK && cmdResp.StatusCode != http.StatusCreated {
-		return "", "", fmt.Errorf("E2B Command Error (%d): %s", cmdResp.StatusCode, string(body))
+		return "", "", sbxRes.SandboxID, fmt.Errorf("E2B Command Error (%d): %s", cmdResp.StatusCode, string(body))
 	}
 
 	var res e2bCommandResponse
 	if err := json.Unmarshal(body, &res); err == nil && (res.Stdout != "" || res.Stderr != "") {
-		return res.Stdout, res.Stderr, nil
+		return res.Stdout, res.Stderr, sbxRes.SandboxID, nil
 	}
 
-	return string(body), "", nil
+	return string(body), "", sbxRes.SandboxID, nil
 }
 
-// 1. E2BRunCode: Execute Python or Shell scripts
+// 1. E2BRunCode: Code Interpreter execution
 func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_run_code",
-			Description: t("TOOL_E2B_RUN_CODE_DESCRIPTION", "Run Python or Shell code inside a secure isolated E2B Cloud Sandbox and return stdout/stderr outputs."),
+			Description: t("TOOL_E2B_RUN_CODE_DESCRIPTION", "Run Python or Shell code inside official E2B Code Interpreter cloud sandbox and return execution results."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_RUN_CODE_TITLE", "Run Code in E2B Sandbox"),
 			},
@@ -151,7 +188,7 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 					},
 					"api_key": {
 						Type:        "string",
-						Description: "Optional E2B API Key. If omitted, uses E2B_API_KEY environment variable.",
+						Description: "Optional E2B API Key.",
 					},
 				},
 				Required: []string{"code"},
@@ -171,7 +208,7 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
-				return utils.NewToolResultError("E2B API Key is missing. Please provide 'api_key' parameter or set E2B_API_KEY environment variable."), nil, nil
+				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
 			}
 
 			var fullCmd string
@@ -181,7 +218,7 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 				fullCmd = fmt.Sprintf("python3 -c %q", code)
 			}
 
-			stdout, stderr, err := executeE2BSandboxCommand(apiKey, fullCmd)
+			stdout, stderr, _, err := executeE2BOfficialCommand(apiKey, "base", fullCmd)
 			if err != nil {
 				return utils.NewToolResultError(fmt.Sprintf("E2B Execution Failed: %v", err)), nil, nil
 			}
@@ -196,26 +233,26 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 	)
 }
 
-// 2. E2BRunCommand: Run bash terminal commands
+// 2. E2BRunCommand: Terminal execution
 func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_run_command",
-			Description: t("TOOL_E2B_RUN_COMMAND_DESCRIPTION", "Run a bash terminal command inside an E2B cloud sandbox."),
+			Description: t("TOOL_E2B_RUN_COMMAND_DESCRIPTION", "Run terminal commands inside an E2B cloud sandbox."),
 			Annotations: &mcp.ToolAnnotations{
-				Title: t("TOOL_E2B_RUN_COMMAND_TITLE", "Run Terminal Command in E2B"),
+				Title: t("TOOL_E2B_RUN_COMMAND_TITLE", "Run Command in E2B"),
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
 				Properties: map[string]*jsonschema.Schema{
 					"command": {
 						Type:        "string",
-						Description: "The terminal command to execute in the E2B cloud sandbox",
+						Description: "The terminal command to execute",
 					},
 					"api_key": {
 						Type:        "string",
-						Description: "Optional E2B API Key. If omitted, uses E2B_API_KEY environment variable.",
+						Description: "Optional E2B API Key.",
 					},
 				},
 				Required: []string{"command"},
@@ -230,10 +267,10 @@ func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
-				return utils.NewToolResultError("E2B API Key is missing. Please provide 'api_key' parameter or set E2B_API_KEY environment variable."), nil, nil
+				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
 			}
 
-			stdout, stderr, err := executeE2BSandboxCommand(apiKey, command)
+			stdout, stderr, _, err := executeE2BOfficialCommand(apiKey, "base", command)
 			if err != nil {
 				return utils.NewToolResultError(fmt.Sprintf("E2B Command Failed: %v", err)), nil, nil
 			}
@@ -248,7 +285,188 @@ func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 	)
 }
 
-// 3. E2BReadFile: Read file contents from sandbox
+// 3. E2BDesktopScreenshot: Official e2b-dev/desktop screenshot implementation
+func E2BDesktopScreenshot(t translations.TranslationHelperFunc) inventory.ServerTool {
+	return NewTool(
+		ToolsetMetadataE2B,
+		mcp.Tool{
+			Name:        "e2b_desktop_screenshot",
+			Description: t("TOOL_E2B_DESKTOP_SCREENSHOT_DESCRIPTION", "Take a screenshot of the official E2B Cloud Desktop GUI (Linux XFCE)."),
+			Annotations: &mcp.ToolAnnotations{
+				Title: t("TOOL_E2B_DESKTOP_SCREENSHOT_TITLE", "Take E2B Desktop Screenshot"),
+			},
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"api_key": {
+						Type:        "string",
+						Description: "Optional E2B API Key.",
+					},
+				},
+			},
+		},
+		[]scopes.Scope{},
+		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+			apiKey := getE2BAPIKey(args)
+			if apiKey == "" {
+				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
+			}
+
+			// Uses e2b-dev/desktop exact screenshot command: scrot --pointer /tmp/screenshot.png
+			cmd := "scrot --pointer /tmp/screenshot.png && base64 -w 0 /tmp/screenshot.png"
+			stdout, stderr, sbxID, err := executeE2BOfficialCommand(apiKey, "desktop", cmd)
+			if err != nil {
+				return utils.NewToolResultError(fmt.Sprintf("Desktop Screenshot Failed: %v", err)), nil, nil
+			}
+
+			b64Str := strings.TrimSpace(stdout)
+			if len(b64Str) == 0 {
+				return utils.NewToolResultError("Screenshot failed: " + stderr), nil, nil
+			}
+
+			vncURL := fmt.Sprintf("https://6080-%s.e2b.app/vnc.html?autoconnect=true&resize=scale", sbxID)
+			return utils.NewToolResultText(fmt.Sprintf("Desktop Screenshot Captured!\nLive Stream URL: %s\nBase64 Image Length: %d chars", vncURL, len(b64Str))), nil, nil
+		},
+	)
+}
+
+// 4. E2BDesktopClick: Official e2b-dev/desktop left/right/double click implementation
+func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool {
+	return NewTool(
+		ToolsetMetadataE2B,
+		mcp.Tool{
+			Name:        "e2b_desktop_click",
+			Description: t("TOOL_E2B_DESKTOP_CLICK_DESCRIPTION", "Perform mouse clicks (left, right, double) at (x, y) on the E2B Cloud Desktop GUI."),
+			Annotations: &mcp.ToolAnnotations{
+				Title: t("TOOL_E2B_DESKTOP_CLICK_TITLE", "Click on E2B Desktop"),
+			},
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"x": {
+						Type:        "integer",
+						Description: "X coordinate (0-1024)",
+					},
+					"y": {
+						Type:        "integer",
+						Description: "Y coordinate (0-768)",
+					},
+					"action": {
+						Type:        "string",
+						Description: "Action: 'left', 'right', 'double', or 'middle' (default 'left')",
+					},
+					"api_key": {
+						Type:        "string",
+						Description: "Optional E2B API Key.",
+					},
+				},
+				Required: []string{"x", "y"},
+			},
+		},
+		[]scopes.Scope{},
+		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+			x, err := RequiredParam[int](args, "x")
+			if err != nil {
+				return utils.NewToolResultError(err.Error()), nil, nil
+			}
+			y, err := RequiredParam[int](args, "y")
+			if err != nil {
+				return utils.NewToolResultError(err.Error()), nil, nil
+			}
+			action, _ := OptionalParam[string](args, "action")
+			if action == "" {
+				action = "left"
+			}
+
+			apiKey := getE2BAPIKey(args)
+			if apiKey == "" {
+				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
+			}
+
+			// Uses e2b-dev/desktop exact xdotool command: xdotool mousemove --sync x y click
+			var clickCmd string
+			switch action {
+			case "right":
+				clickCmd = fmt.Sprintf("xdotool mousemove --sync %d %d click 3", x, y)
+			case "double":
+				clickCmd = fmt.Sprintf("xdotool mousemove --sync %d %d click --repeat 2 1", x, y)
+			case "middle":
+				clickCmd = fmt.Sprintf("xdotool mousemove --sync %d %d click 2", x, y)
+			default:
+				clickCmd = fmt.Sprintf("xdotool mousemove --sync %d %d click 1", x, y)
+			}
+
+			stdout, stderr, _, err := executeE2BOfficialCommand(apiKey, "desktop", clickCmd)
+			if err != nil {
+				return utils.NewToolResultError(fmt.Sprintf("Desktop Click Failed: %v", err)), nil, nil
+			}
+
+			return utils.NewToolResultText(fmt.Sprintf("Executed %s click at (%d, %d). %s %s", action, x, y, stdout, stderr)), nil, nil
+		},
+	)
+}
+
+// 5. E2BDesktopType: Official e2b-dev/desktop typing and key press implementation
+func E2BDesktopType(t translations.TranslationHelperFunc) inventory.ServerTool {
+	return NewTool(
+		ToolsetMetadataE2B,
+		mcp.Tool{
+			Name:        "e2b_desktop_type",
+			Description: t("TOOL_E2B_DESKTOP_TYPE_DESCRIPTION", "Type text or press mapped keys (Return, Tab, BackSpace, Escape, Super_L) on E2B Cloud Desktop GUI."),
+			Annotations: &mcp.ToolAnnotations{
+				Title: t("TOOL_E2B_DESKTOP_TYPE_TITLE", "Type on E2B Desktop"),
+			},
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"text": {
+						Type:        "string",
+						Description: "Text string to type onto desktop",
+					},
+					"key": {
+						Type:        "string",
+						Description: "Key to press (e.g. 'enter', 'tab', 'backspace', 'ctrl', 'alt')",
+					},
+					"api_key": {
+						Type:        "string",
+						Description: "Optional E2B API Key.",
+					},
+				},
+			},
+		},
+		[]scopes.Scope{},
+		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+			text, _ := OptionalParam[string](args, "text")
+			key, _ := OptionalParam[string](args, "key")
+			apiKey := getE2BAPIKey(args)
+			if apiKey == "" {
+				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
+			}
+
+			// Uses e2b-dev/desktop exact xdotool command: xdotool type --delay 12 -- text / xdotool key
+			var typeCmd string
+			if text != "" {
+				typeCmd += fmt.Sprintf("xdotool type --delay 12 -- %q; ", text)
+			}
+			if key != "" {
+				typeCmd += fmt.Sprintf("xdotool key %q; ", mapKey(key))
+			}
+
+			if typeCmd == "" {
+				return utils.NewToolResultError("Please provide 'text' or 'key' to type."), nil, nil
+			}
+
+			stdout, stderr, _, err := executeE2BOfficialCommand(apiKey, "desktop", typeCmd)
+			if err != nil {
+				return utils.NewToolResultError(fmt.Sprintf("Desktop Type Failed: %v", err)), nil, nil
+			}
+
+			return utils.NewToolResultText(fmt.Sprintf("Typing Action Executed. %s %s", stdout, stderr)), nil, nil
+		},
+	)
+}
+
+// 6. E2BReadFile: Read file from sandbox
 func E2BReadFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
@@ -263,7 +481,7 @@ func E2BReadFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 				Properties: map[string]*jsonschema.Schema{
 					"path": {
 						Type:        "string",
-						Description: "Absolute file path inside the sandbox (e.g. '/home/user/data.json')",
+						Description: "Absolute file path inside the sandbox",
 					},
 					"api_key": {
 						Type:        "string",
@@ -285,7 +503,7 @@ func E2BReadFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 			}
 
 			cmd := fmt.Sprintf("cat %q", path)
-			stdout, stderr, err := executeE2BSandboxCommand(apiKey, cmd)
+			stdout, stderr, _, err := executeE2BOfficialCommand(apiKey, "base", cmd)
 			if err != nil {
 				return utils.NewToolResultError(fmt.Sprintf("Failed to read file: %v", err)), nil, nil
 			}
@@ -297,7 +515,7 @@ func E2BReadFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 	)
 }
 
-// 4. E2BWriteFile: Write content to a file inside sandbox
+// 7. E2BWriteFile: Write file to sandbox
 func E2BWriteFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
@@ -344,25 +562,25 @@ func E2BWriteFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 			b64Content := base64.StdEncoding.EncodeToString([]byte(content))
 			cmd := fmt.Sprintf("mkdir -p $(dirname %q) && echo %q | base64 -d > %q", path, b64Content, path)
 
-			stdout, stderr, err := executeE2BSandboxCommand(apiKey, cmd)
+			stdout, stderr, _, err := executeE2BOfficialCommand(apiKey, "base", cmd)
 			if err != nil {
 				return utils.NewToolResultError(fmt.Sprintf("Failed to write file: %v", err)), nil, nil
 			}
 			if stderr != "" {
 				return utils.NewToolResultError(stderr), nil, nil
 			}
-			return utils.NewToolResultText(fmt.Sprintf("File successfully written to %s (stdout: %s)", path, stdout)), nil, nil
+			return utils.NewToolResultText(fmt.Sprintf("File written to %s (stdout: %s)", path, stdout)), nil, nil
 		},
 	)
 }
 
-// 5. E2BListDir: List directory structure in sandbox
+// 8. E2BListDir: List directory structure in sandbox
 func E2BListDir(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_list_dir",
-			Description: t("TOOL_E2B_LIST_DIR_DESCRIPTION", "List files and directories inside an E2B cloud sandbox."),
+			Description: t("TOOL_E2B_LIST_DIR_DESCRIPTION", "List files and directory contents inside an E2B cloud sandbox."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_LIST_DIR_TITLE", "List Directory in E2B Sandbox"),
 			},
@@ -392,7 +610,7 @@ func E2BListDir(t translations.TranslationHelperFunc) inventory.ServerTool {
 			}
 
 			cmd := fmt.Sprintf("ls -la %q", path)
-			stdout, stderr, err := executeE2BSandboxCommand(apiKey, cmd)
+			stdout, stderr, _, err := executeE2BOfficialCommand(apiKey, "base", cmd)
 			if err != nil {
 				return utils.NewToolResultError(fmt.Sprintf("Failed to list directory: %v", err)), nil, nil
 			}
@@ -402,187 +620,4 @@ func E2BListDir(t translations.TranslationHelperFunc) inventory.ServerTool {
 			return utils.NewToolResultText(stdout), nil, nil
 		},
 	)
-}
-
-// 6. E2BDesktopScreenshot: Capture Cloud Desktop GUI screenshot
-func E2BDesktopScreenshot(t translations.TranslationHelperFunc) inventory.ServerTool {
-	return NewTool(
-		ToolsetMetadataE2B,
-		mcp.Tool{
-			Name:        "e2b_desktop_screenshot",
-			Description: t("TOOL_E2B_DESKTOP_SCREENSHOT_DESCRIPTION", "Take a screenshot of the virtual Xvfb Desktop GUI in the E2B cloud sandbox."),
-			Annotations: &mcp.ToolAnnotations{
-				Title: t("TOOL_E2B_DESKTOP_SCREENSHOT_TITLE", "Take E2B Desktop Screenshot"),
-			},
-			InputSchema: &jsonschema.Schema{
-				Type: "object",
-				Properties: map[string]*jsonschema.Schema{
-					"api_key": {
-						Type:        "string",
-						Description: "Optional E2B API Key.",
-					},
-				},
-			},
-		},
-		[]scopes.Scope{},
-		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
-			apiKey := getE2BAPIKey(args)
-			if apiKey == "" {
-				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
-			}
-
-			cmd := "sudo apt-get update -y >/dev/null 2>&1 && sudo apt-get install -y xvfb scrot >/dev/null 2>&1; Xvfb :99 -ac -screen 0 1280x1024x24 >/dev/null 2>&1 & sleep 1; DISPLAY=:99 scrot /tmp/screen.png; base64 -w 0 /tmp/screen.png"
-			stdout, stderr, err := executeE2BSandboxCommand(apiKey, cmd)
-			if err != nil {
-				return utils.NewToolResultError(fmt.Sprintf("Screenshot Failed: %v", err)), nil, nil
-			}
-
-			b64Str := strings.TrimSpace(stdout)
-			if len(b64Str) == 0 {
-				return utils.NewToolResultError("Screenshot captured empty image or failed. " + stderr), nil, nil
-			}
-
-			return utils.NewToolResultText(fmt.Sprintf("Screenshot Captured! Base64 Image Length: %d characters.\nBase64 Data Prefix: data:image/png;base64,%s...", len(b64Str), b64Str[:min(len(b64Str), 100)])), nil, nil
-		},
-	)
-}
-
-// 7. E2BDesktopClick: Mouse click on Desktop GUI at (x, y)
-func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool {
-	return NewTool(
-		ToolsetMetadataE2B,
-		mcp.Tool{
-			Name:        "e2b_desktop_click",
-			Description: t("TOOL_E2B_DESKTOP_CLICK_DESCRIPTION", "Perform a mouse click at specific (x, y) coordinates on the E2B Cloud Desktop GUI."),
-			Annotations: &mcp.ToolAnnotations{
-				Title: t("TOOL_E2B_DESKTOP_CLICK_TITLE", "Click on E2B Desktop"),
-			},
-			InputSchema: &jsonschema.Schema{
-				Type: "object",
-				Properties: map[string]*jsonschema.Schema{
-					"x": {
-						Type:        "integer",
-						Description: "X coordinate (0-1280)",
-					},
-					"y": {
-						Type:        "integer",
-						Description: "Y coordinate (0-1024)",
-					},
-					"button": {
-						Type:        "string",
-						Description: "Click button: 'left', 'right', or 'double' (default is 'left')",
-					},
-					"api_key": {
-						Type:        "string",
-						Description: "Optional E2B API Key.",
-					},
-				},
-				Required: []string{"x", "y"},
-			},
-		},
-		[]scopes.Scope{},
-		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
-			x, err := RequiredParam[int](args, "x")
-			if err != nil {
-				return utils.NewToolResultError(err.Error()), nil, nil
-			}
-			y, err := RequiredParam[int](args, "y")
-			if err != nil {
-				return utils.NewToolResultError(err.Error()), nil, nil
-			}
-			btn, _ := OptionalParam[string](args, "button")
-			if btn == "" {
-				btn = "left"
-			}
-
-			apiKey := getE2BAPIKey(args)
-			if apiKey == "" {
-				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
-			}
-
-			var clickCmd string
-			if btn == "right" {
-				clickCmd = fmt.Sprintf("xdotool mousemove %d %d click 3", x, y)
-			} else if btn == "double" {
-				clickCmd = fmt.Sprintf("xdotool mousemove %d %d click --repeat 2 1", x, y)
-			} else {
-				clickCmd = fmt.Sprintf("xdotool mousemove %d %d click 1", x, y)
-			}
-
-			cmd := fmt.Sprintf("sudo apt-get install -y xvfb xdotool >/dev/null 2>&1; Xvfb :99 -ac -screen 0 1280x1024x24 >/dev/null 2>&1 & sleep 1; DISPLAY=:99 %s", clickCmd)
-			stdout, stderr, err := executeE2BSandboxCommand(apiKey, cmd)
-			if err != nil {
-				return utils.NewToolResultError(fmt.Sprintf("Desktop Click Failed: %v", err)), nil, nil
-			}
-
-			return utils.NewToolResultText(fmt.Sprintf("Successfully clicked at (%d, %d) [%s click]. Output: %s %s", x, y, btn, stdout, stderr)), nil, nil
-		},
-	)
-}
-
-// 8. E2BDesktopType: Type text onto Cloud Desktop GUI
-func E2BDesktopType(t translations.TranslationHelperFunc) inventory.ServerTool {
-	return NewTool(
-		ToolsetMetadataE2B,
-		mcp.Tool{
-			Name:        "e2b_desktop_type",
-			Description: t("TOOL_E2B_DESKTOP_TYPE_DESCRIPTION", "Type text or press keys on the E2B Cloud Desktop GUI."),
-			Annotations: &mcp.ToolAnnotations{
-				Title: t("TOOL_E2B_DESKTOP_TYPE_TITLE", "Type on E2B Desktop"),
-			},
-			InputSchema: &jsonschema.Schema{
-				Type: "object",
-				Properties: map[string]*jsonschema.Schema{
-					"text": {
-						Type:        "string",
-						Description: "Text to type onto the active window",
-					},
-					"key": {
-						Type:        "string",
-						Description: "Optional key press (e.g. 'Return', 'Tab', 'BackSpace', 'ctrl+c')",
-					},
-					"api_key": {
-						Type:        "string",
-						Description: "Optional E2B API Key.",
-					},
-				},
-			},
-		},
-		[]scopes.Scope{},
-		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
-			text, _ := OptionalParam[string](args, "text")
-			key, _ := OptionalParam[string](args, "key")
-			apiKey := getE2BAPIKey(args)
-			if apiKey == "" {
-				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
-			}
-
-			var typeCmd string
-			if text != "" {
-				typeCmd += fmt.Sprintf("xdotool type %q; ", text)
-			}
-			if key != "" {
-				typeCmd += fmt.Sprintf("xdotool key %q; ", key)
-			}
-
-			if typeCmd == "" {
-				return utils.NewToolResultError("Please provide either 'text' or 'key' to type."), nil, nil
-			}
-
-			cmd := fmt.Sprintf("sudo apt-get install -y xvfb xdotool >/dev/null 2>&1; Xvfb :99 -ac -screen 0 1280x1024x24 >/dev/null 2>&1 & sleep 1; DISPLAY=:99 %s", typeCmd)
-			stdout, stderr, err := executeE2BSandboxCommand(apiKey, cmd)
-			if err != nil {
-				return utils.NewToolResultError(fmt.Sprintf("Desktop Type Failed: %v", err)), nil, nil
-			}
-
-			return utils.NewToolResultText(fmt.Sprintf("Successfully executed typing action. Output: %s %s", stdout, stderr)), nil, nil
-		},
-	)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
