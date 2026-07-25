@@ -17,6 +17,11 @@
         ],
         "type": "string"
       },
+      "minimal_output": {
+        "default": false,
+        "description": "Return only the fields needed to identify and triage each run, omitting the embedded repository and actor objects. **ONLY** used when method is 'list_workflow_runs'. Default false",
+        "type": "boolean"
+      },
       "owner": {
         "description": "Repository owner",
         "type": "string"
