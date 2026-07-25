@@ -181,7 +181,7 @@ func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_run_command",
-			Description: t("TOOL_E2B_RUN_COMMAND_DESCRIPTION", "Run terminal commands inside an E2B cloud sandbox. Set 'keep_alive': true or pass 'sandbox_id' for multi-step persistent sessions."),
+			Description: t("TOOL_E2B_RUN_COMMAND_DESCRIPTION", "Run terminal commands inside an E2B cloud sandbox. Set 'keep_alive': true or pass 'sandbox_id' for multi-step persistent sessions. CRITICAL: For long-running builds or compilation (like 'go build', 'npm install', 'docker build'), ALWAYS set 'background': true to prevent HTTP timeouts."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_RUN_COMMAND_TITLE", "Run Command in E2B"),
 			},
