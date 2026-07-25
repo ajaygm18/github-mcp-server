@@ -23,7 +23,7 @@ const (
 	// envGatewayToken holds the GitHub token injected into each authorized
 	// request. When empty, the gateway is disabled and upstream per-request
 	// bearer authentication applies unchanged.
-	envGatewayToken = "MCP_GATEWAY_GITHUB_TOKEN"
+	envGatewayToken = "MCP_GATEWAY_GITHUB_TOKEN" //nolint:gosec // G101: env var name, not a credential
 
 	// envGatewayKey holds the shared secret callers must present. Required
 	// whenever envGatewayToken is set.
