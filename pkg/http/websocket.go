@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/github/github-mcp-server/pkg/github"
 	"github.com/github/github-mcp-server/pkg/inventory"
 	"github.com/gorilla/websocket"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -168,6 +169,7 @@ func (h *Handler) dispatchWSJSONRPC(r *http.Request, payload []byte) []byte {
 
 		toolCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
+		toolCtx = github.ContextWithDeps(toolCtx, h.deps)
 
 		argsBytes, _ := json.Marshal(callParams.Arguments)
 		callReq := &mcp.CallToolRequest{}
