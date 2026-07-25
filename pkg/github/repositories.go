@@ -2062,7 +2062,10 @@ func GetLatestRelease(t translations.TranslationHelperFunc) inventory.ServerTool
 				return ghErrors.NewGitHubAPIStatusErrorResponse(ctx, "failed to get latest release", resp, body), nil, nil
 			}
 
-			r, err := json.Marshal(release)
+			// Return the trimmed release shape. The raw payload embeds a full
+			// uploader user object per asset, which is large enough to exhaust a
+			// model context window on repos with many assets.
+			r, err := json.Marshal(convertToMinimalRelease(release))
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to marshal response: %w", err)
 			}
