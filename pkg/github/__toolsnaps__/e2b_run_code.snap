@@ -1,0 +1,41 @@
+{
+  "annotations": {
+    "idempotentHint": false,
+    "readOnlyHint": false,
+    "title": "Run Code in E2B Sandbox"
+  },
+  "description": "Run Python code inside official E2B Code Interpreter cloud sandbox. Set 'keep_alive': true to persist the sandbox. Note: keep_alive bills for wall-clock uptime; call e2b_kill_sandbox when finished.",
+  "inputSchema": {
+    "properties": {
+      "api_key": {
+        "description": "Optional E2B API Key.",
+        "type": "string"
+      },
+      "code": {
+        "description": "The Python code to execute in the E2B sandbox",
+        "type": "string"
+      },
+      "keep_alive": {
+        "description": "Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished.",
+        "type": "boolean"
+      },
+      "new_sandbox": {
+        "description": "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
+        "type": "boolean"
+      },
+      "sandbox_id": {
+        "description": "Existing E2B sandbox ID to reuse. If you created a sandbox earlier in this session, you must pass its ID here. Omitting it reuses the most recent active sandbox unless new_sandbox is true.",
+        "type": "string"
+      },
+      "ttl_seconds": {
+        "description": "Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed.",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "code"
+    ],
+    "type": "object"
+  },
+  "name": "e2b_run_code"
+}

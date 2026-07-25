@@ -1,0 +1,22 @@
+{
+  "annotations": {
+    "idempotentHint": false,
+    "readOnlyHint": true,
+    "title": "List E2B Sandboxes"
+  },
+  "description": "List all active and paused E2B cloud sandboxes for your account. Lifecycle state machine: running -\u003e paused -\u003e destroyed. Best practice: Call this tool at the start of a session to discover reusable sandboxes, and at the end of a task to verify no billed VMs remain running.",
+  "inputSchema": {
+    "properties": {
+      "api_key": {
+        "description": "Optional E2B API Key.",
+        "type": "string"
+      },
+      "ttl_seconds": {
+        "description": "Optional maximum allowed idle TTL in seconds before sandboxes are automatically destroyed.",
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "name": "e2b_list_sandboxes"
+}

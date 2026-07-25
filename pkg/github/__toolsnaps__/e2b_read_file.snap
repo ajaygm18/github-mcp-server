@@ -1,0 +1,41 @@
+{
+  "annotations": {
+    "idempotentHint": false,
+    "readOnlyHint": false,
+    "title": "Read File from E2B Sandbox"
+  },
+  "description": "Read file contents from sandbox. Set 'keep_alive': true to persist the sandbox session.",
+  "inputSchema": {
+    "properties": {
+      "api_key": {
+        "description": "Optional E2B API Key.",
+        "type": "string"
+      },
+      "keep_alive": {
+        "description": "Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished.",
+        "type": "boolean"
+      },
+      "new_sandbox": {
+        "description": "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
+        "type": "boolean"
+      },
+      "path": {
+        "description": "Absolute file path inside the sandbox",
+        "type": "string"
+      },
+      "sandbox_id": {
+        "description": "Existing E2B sandbox ID to reuse. Omitting it reuses the most recent active sandbox unless new_sandbox is true.",
+        "type": "string"
+      },
+      "ttl_seconds": {
+        "description": "Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed.",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "name": "e2b_read_file"
+}

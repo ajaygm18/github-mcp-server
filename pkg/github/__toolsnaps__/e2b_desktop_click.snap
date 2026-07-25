@@ -1,0 +1,50 @@
+{
+  "annotations": {
+    "idempotentHint": false,
+    "readOnlyHint": false,
+    "title": "Click on E2B Desktop"
+  },
+  "description": "Perform mouse click at (x, y) on E2B Cloud Desktop GUI. Set 'keep_alive': true to persist the desktop sandbox session.",
+  "inputSchema": {
+    "properties": {
+      "action": {
+        "description": "Action: 'left', 'right', 'double', or 'middle' (default 'left')",
+        "type": "string"
+      },
+      "api_key": {
+        "description": "Optional E2B API Key.",
+        "type": "string"
+      },
+      "keep_alive": {
+        "description": "Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished.",
+        "type": "boolean"
+      },
+      "new_sandbox": {
+        "description": "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
+        "type": "boolean"
+      },
+      "sandbox_id": {
+        "description": "Existing E2B sandbox ID to reuse. Omitting it reuses the most recent active sandbox unless new_sandbox is true.",
+        "type": "string"
+      },
+      "ttl_seconds": {
+        "description": "Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed.",
+        "type": "integer"
+      },
+      "x": {
+        "description": "X coordinate (0-1024)",
+        "type": "integer"
+      },
+      "y": {
+        "description": "Y coordinate (0-768)",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "x",
+      "y"
+    ],
+    "type": "object"
+  },
+  "name": "e2b_desktop_click"
+}

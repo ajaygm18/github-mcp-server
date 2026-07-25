@@ -622,7 +622,7 @@ func E2BListSandboxes(t translations.TranslationHelperFunc) inventory.ServerTool
 			Description: t("TOOL_E2B_LIST_SANDBOXES_DESCRIPTION", "List all active and paused E2B cloud sandboxes for your account. Lifecycle state machine: running -> paused -> destroyed. Best practice: Call this tool at the start of a session to discover reusable sandboxes, and at the end of a task to verify no billed VMs remain running."),
 			Annotations: &mcp.ToolAnnotations{
 				Title:        t("TOOL_E2B_LIST_SANDBOXES_TITLE", "List E2B Sandboxes"),
-				ReadOnlyHint: false,
+				ReadOnlyHint: true,
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
@@ -636,6 +636,7 @@ func E2BListSandboxes(t translations.TranslationHelperFunc) inventory.ServerTool
 						Description: "Optional E2B API Key.",
 					},
 				},
+				Required: []string{},
 			},
 		},
 		[]scopes.Scope{},

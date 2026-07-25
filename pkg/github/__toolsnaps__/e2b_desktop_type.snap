@@ -1,0 +1,42 @@
+{
+  "annotations": {
+    "idempotentHint": false,
+    "readOnlyHint": false,
+    "title": "Type on E2B Desktop"
+  },
+  "description": "Type text or press keys on E2B Cloud Desktop GUI. Set 'keep_alive': true to persist the desktop sandbox session.",
+  "inputSchema": {
+    "properties": {
+      "api_key": {
+        "description": "Optional E2B API Key.",
+        "type": "string"
+      },
+      "keep_alive": {
+        "description": "Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished.",
+        "type": "boolean"
+      },
+      "key": {
+        "description": "Key to press (e.g. 'enter', 'tab', 'backspace', 'ctrl', 'alt')",
+        "type": "string"
+      },
+      "new_sandbox": {
+        "description": "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
+        "type": "boolean"
+      },
+      "sandbox_id": {
+        "description": "Existing E2B sandbox ID to reuse. Omitting it reuses the most recent active sandbox unless new_sandbox is true.",
+        "type": "string"
+      },
+      "text": {
+        "description": "Text string to type onto desktop",
+        "type": "string"
+      },
+      "ttl_seconds": {
+        "description": "Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed.",
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "name": "e2b_desktop_type"
+}

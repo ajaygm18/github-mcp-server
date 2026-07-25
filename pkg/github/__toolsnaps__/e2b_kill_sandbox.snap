@@ -1,0 +1,25 @@
+{
+  "annotations": {
+    "idempotentHint": false,
+    "readOnlyHint": false,
+    "title": "Kill E2B Sandbox"
+  },
+  "description": "Explicitly terminate and destroy an active persistent E2B cloud sandbox VM by its sandbox_id. Lifecycle state machine: running -\u003e paused -\u003e destroyed. Returns success if target sandbox is already paused or destroyed.",
+  "inputSchema": {
+    "properties": {
+      "api_key": {
+        "description": "Optional E2B API Key.",
+        "type": "string"
+      },
+      "sandbox_id": {
+        "description": "The E2B sandbox ID to terminate",
+        "type": "string"
+      }
+    },
+    "required": [
+      "sandbox_id"
+    ],
+    "type": "object"
+  },
+  "name": "e2b_kill_sandbox"
+}
