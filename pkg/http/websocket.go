@@ -17,7 +17,7 @@ import (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024 * 64,
 	WriteBufferSize: 1024 * 64,
-	CheckOrigin: func(r *http.Request) bool {
+	CheckOrigin: func(_ *http.Request) bool {
 		return true // Allow all origins for MCP clients
 	},
 }
@@ -59,7 +59,7 @@ func (h *Handler) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 			select {
 			case <-ticker.C:
 				mu.Lock()
-				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				if err := conn.WriteMessage(websocket.PingMessage, []byte{}); err != nil {
 					mu.Unlock()
 					cancel()
@@ -73,7 +73,7 @@ func (h *Handler) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
 
@@ -94,7 +94,7 @@ func (h *Handler) ServeWebSocket(w http.ResponseWriter, r *http.Request) {
 			respBytes := h.dispatchWSJSONRPC(r, rawPayload)
 			if len(respBytes) > 0 {
 				mu.Lock()
-				conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+				_ = conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
 				_ = conn.WriteMessage(websocket.TextMessage, respBytes)
 				mu.Unlock()
 			}
