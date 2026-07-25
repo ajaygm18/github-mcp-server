@@ -265,7 +265,7 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 			},
 		},
 		[]scopes.Scope{},
-		func(_ context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		func(_ context.Context, _ ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			code, err := RequiredParam[string](args, "code")
 			if err != nil {
 				return utils.NewToolResultError(err.Error()), nil, nil
@@ -456,7 +456,7 @@ func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 			},
 		},
 		[]scopes.Scope{},
-		func(_ context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		func(_ context.Context, _ ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			command, err := RequiredParam[string](args, "command")
 			if err != nil {
 				return utils.NewToolResultError(err.Error()), nil, nil
@@ -639,7 +639,7 @@ func E2BListSandboxes(t translations.TranslationHelperFunc) inventory.ServerTool
 			},
 		},
 		[]scopes.Scope{},
-		func(_ context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		func(_ context.Context, _ ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
@@ -755,7 +755,7 @@ func E2BDesktopScreenshot(t translations.TranslationHelperFunc) inventory.Server
 			},
 		},
 		[]scopes.Scope{},
-		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		func(_ context.Context, _ ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
@@ -920,7 +920,7 @@ func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool 
 			},
 		},
 		[]scopes.Scope{},
-		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		func(_ context.Context, _ ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			xf, err := RequiredParam[float64](args, "x")
 			if err != nil {
 				return utils.NewToolResultError(err.Error()), nil, nil
@@ -1098,7 +1098,7 @@ func E2BDesktopType(t translations.TranslationHelperFunc) inventory.ServerTool {
 			},
 		},
 		[]scopes.Scope{},
-		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+		func(_ context.Context, _ ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			text, _ := OptionalParam[string](args, "text")
 			key, _ := OptionalParam[string](args, "key")
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
