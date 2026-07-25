@@ -166,6 +166,9 @@ func (h *Handler) dispatchWSJSONRPC(r *http.Request, payload []byte) []byte {
 			return formatJSONRPCError(req.ID, -32601, fmt.Sprintf("Tool '%s' not found", callParams.Name))
 		}
 
+		toolCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+
 		argsBytes, _ := json.Marshal(callParams.Arguments)
 		callReq := &mcp.CallToolRequest{}
 		callReq.Params.Name = callParams.Name
