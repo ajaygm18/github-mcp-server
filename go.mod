@@ -7,6 +7,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/google/go-github/v89 v89.0.0
 	github.com/google/jsonschema-go v0.4.3
+	github.com/gorilla/websocket v1.5.3
 	github.com/josephburnett/jd/v2 v2.5.0
 	github.com/lithammer/fuzzysearch v1.1.8
 	github.com/microcosm-cc/bluemonday v1.0.27
@@ -28,7 +29,6 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
