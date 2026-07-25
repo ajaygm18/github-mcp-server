@@ -25,7 +25,7 @@ var ToolsetMetadataE2B = inventory.ToolsetMetadata{
 	ID:          "e2b",
 	Description: "Official E2B Cloud Desktop Sandbox, VNC Stream, File Manager, and Code Interpreter tools supporting single-shot and persistent multi-command sandbox sessions. Always use e2b_list_sandboxes to audit for active sandboxes.",
 	Default:     true,
-	Icon:        "terminal",
+	Icon:        "tools",
 }
 
 // Session & active sandbox memory tracking
