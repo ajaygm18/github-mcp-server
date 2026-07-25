@@ -99,11 +99,13 @@ code_to_run = %s
 sbx = Sandbox.create()
 try:
     execution = sbx.run_code(code_to_run)
-    stdout_text = "".join(execution.logs.stdout)
-    stderr_text = "".join(execution.logs.stderr)
+    stdout_text = "".join([str(l) for l in execution.logs.stdout])
+    stderr_text = "".join([str(l) for l in execution.logs.stderr])
     out = stdout_text
     if stderr_text:
         out += "\nSTDERR:\n" + stderr_text
+    if not out and execution.results:
+        out = str(execution.results)
     print(out)
 finally:
     sbx.kill()
