@@ -325,6 +325,10 @@ func AllTools(t translations.TranslationHelperFunc) []inventory.ServerTool {
 		// UI tools (insiders only)
 		UIGet(t),
 
+		// E2B Sandbox tools
+		E2BRunCode(t),
+		E2BRunCommand(t),
+
 		// Granular issue tools (feature-flagged, replace consolidated issue_write/sub_issue_write)
 		GranularCreateIssue(t),
 		GranularUpdateIssueTitle(t),
