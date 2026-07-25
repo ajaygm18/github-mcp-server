@@ -203,9 +203,9 @@ func runE2BPythonScript(apiKey, pyCode string) (string, error) {
 		if partialOut == "" {
 			partialOut = strings.TrimSpace(stderr.String())
 		}
-		return fmt.Sprintf("E2B Command Timed Out (Reached 24s Heroku Safety Limit).\n" +
-			"Note: Heroku HTTP router enforces a strict 30s timeout on web requests.\n" +
-			"For long builds or compilation, set 'background': true on e2b_run_command, or break commands into smaller steps.\n" +
+		return fmt.Sprintf("E2B Command Timed Out (Reached 24s Heroku Safety Limit).\n"+
+			"Note: Heroku HTTP router enforces a strict 30s timeout on web requests.\n"+
+			"For long builds or compilation, set 'background': true on e2b_run_command, or break commands into smaller steps.\n"+
 			"Partial Output Collected:\n%s", partialOut), nil
 	case err := <-done:
 		if err != nil {
