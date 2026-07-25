@@ -640,6 +640,7 @@ The following sets of tools are available:
 - **actions_list** - List GitHub Actions workflows in a repository
   - **Required OAuth Scopes**: `repo`
   - `method`: The action to perform (string, required)
+  - `minimal_output`: Return only the fields needed to identify and triage each run, omitting the embedded repository and actor objects. **ONLY** used when method is 'list_workflow_runs'. Default false (boolean, optional)
   - `owner`: Repository owner (string, required)
   - `page`: Page number for pagination (default: 1) (number, optional)
   - `per_page`: Results per page for pagination (default: 30, max: 100) (number, optional)
