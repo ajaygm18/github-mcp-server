@@ -23,7 +23,7 @@ import (
 
 var ToolsetMetadataE2B = inventory.ToolsetMetadata{
 	ID:          "e2b",
-	Description: "Official E2B Cloud Desktop Sandbox, VNC Stream, File Manager, and Code Interpreter tools supporting single-shot and persistent multi-command sandbox sessions",
+	Description: "Official E2B Cloud Desktop Sandbox, VNC Stream, File Manager, and Code Interpreter tools supporting single-shot and persistent multi-command sandbox sessions. Always use e2b_list_sandboxes to audit for active sandboxes.",
 	Default:     true,
 	Icon:        "terminal",
 }
@@ -253,7 +253,7 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 					},
 					"ttl_seconds": {
 						Type:        "integer",
-						Description: "Optional maximum allowed idle TTL in seconds (e.g. 900 for 15 minutes) before the sandbox is automatically destroyed.",
+						Description: "Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed.",
 					},
 					"api_key": {
 						Type:        "string",
@@ -293,6 +293,7 @@ fallback_sbx_id = %s
 keep_alive = %s
 new_sandbox = %s
 ttl_seconds = %d
+effective_ttl = ttl_seconds if ttl_seconds > 0 else 900
 
 reused_existing = False
 sbx = None
@@ -303,21 +304,20 @@ try:
             sbx = Sandbox.connect(sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create(timeout=ttl_seconds if ttl_seconds > 0 else 900)
+            sbx = Sandbox.create(timeout=effective_ttl)
     elif not new_sandbox and fallback_sbx_id:
         try:
             sbx = Sandbox.connect(fallback_sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create(timeout=ttl_seconds if ttl_seconds > 0 else 900)
+            sbx = Sandbox.create(timeout=effective_ttl)
     else:
-        sbx = Sandbox.create(timeout=ttl_seconds if ttl_seconds > 0 else 900)
+        sbx = Sandbox.create(timeout=effective_ttl)
 
-    if ttl_seconds > 0 and reused_existing:
-        try:
-            sbx.set_timeout(ttl_seconds)
-        except Exception:
-            pass
+    try:
+        sbx.set_timeout(effective_ttl)
+    except Exception:
+        pass
 
     t0 = time.time()
     execution = sbx.run_code(code_to_run)
@@ -442,7 +442,7 @@ func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 					},
 					"ttl_seconds": {
 						Type:        "integer",
-						Description: "Optional maximum allowed idle TTL in seconds (e.g. 900 for 15 minutes) before the sandbox is automatically destroyed.",
+						Description: "Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed.",
 					},
 					"api_key": {
 						Type:        "string",
@@ -484,6 +484,7 @@ keep_alive = %s
 new_sandbox = %s
 is_background = %s
 ttl_seconds = %d
+effective_ttl = ttl_seconds if ttl_seconds > 0 else 900
 
 reused_existing = False
 sbx = None
@@ -494,21 +495,20 @@ try:
             sbx = Sandbox.connect(sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create(timeout=ttl_seconds if ttl_seconds > 0 else 900)
+            sbx = Sandbox.create(timeout=effective_ttl)
     elif not new_sandbox and fallback_sbx_id:
         try:
             sbx = Sandbox.connect(fallback_sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create(timeout=ttl_seconds if ttl_seconds > 0 else 900)
+            sbx = Sandbox.create(timeout=effective_ttl)
     else:
-        sbx = Sandbox.create(timeout=ttl_seconds if ttl_seconds > 0 else 900)
+        sbx = Sandbox.create(timeout=effective_ttl)
 
-    if ttl_seconds > 0 and reused_existing:
-        try:
-            sbx.set_timeout(ttl_seconds)
-        except Exception:
-            pass
+    try:
+        sbx.set_timeout(effective_ttl)
+    except Exception:
+        pass
 
     t0 = time.time()
     exit_code = 0
@@ -697,6 +697,10 @@ except Exception as infra_err:
 				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %s", errMsg)), nil, nil
 			}
 
+			if len(parsed.Sandboxes) == 0 {
+				return utils.NewToolResultText("Discovered 0 E2B Cloud Sandboxes. No billed VMs are currently running."), nil, nil
+			}
+
 			resJSON, _ := json.MarshalIndent(map[string]any{
 				"total_sandboxes": len(parsed.Sandboxes),
 				"sandboxes":       parsed.Sandboxes,
@@ -733,6 +737,10 @@ func E2BDesktopScreenshot(t translations.TranslationHelperFunc) inventory.Server
 						Type:        "boolean",
 						Description: "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
 					},
+					"ttl_seconds": {
+						Type:        "integer",
+						Description: "Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed.",
+					},
 					"api_key": {
 						Type:        "string",
 						Description: "Optional E2B API Key.",
@@ -745,6 +753,7 @@ func E2BDesktopScreenshot(t translations.TranslationHelperFunc) inventory.Server
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
+			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
@@ -763,6 +772,8 @@ sbx_id = %s
 fallback_sbx_id = %s
 keep_alive = %s
 new_sandbox = %s
+ttl_seconds = %d
+effective_ttl = ttl_seconds if ttl_seconds > 0 else 900
 
 reused_existing = False
 sbx = None
@@ -773,15 +784,20 @@ try:
             sbx = Sandbox.connect(sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create()
+            sbx = Sandbox.create(timeout=effective_ttl)
     elif not new_sandbox and fallback_sbx_id:
         try:
             sbx = Sandbox.connect(fallback_sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create()
+            sbx = Sandbox.create(timeout=effective_ttl)
     else:
-        sbx = Sandbox.create()
+        sbx = Sandbox.create(timeout=effective_ttl)
+
+    try:
+        sbx.set_timeout(effective_ttl)
+    except Exception:
+        pass
 
     sbx.stream.start()
     vnc_url = sbx.stream.get_url()
@@ -817,7 +833,7 @@ finally:
             sbx.kill()
         except Exception:
             pass
-`, escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox))
+`, escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox), ttlSeconds)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -883,6 +899,10 @@ func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool 
 						Type:        "boolean",
 						Description: "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
 					},
+					"ttl_seconds": {
+						Type:        "integer",
+						Description: "Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed.",
+					},
 					"api_key": {
 						Type:        "string",
 						Description: "Optional E2B API Key.",
@@ -908,6 +928,7 @@ func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool 
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
+			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
 
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
@@ -930,6 +951,8 @@ new_sandbox = %s
 act = "%s"
 x_coord = %d
 y_coord = %d
+ttl_seconds = %d
+effective_ttl = ttl_seconds if ttl_seconds > 0 else 900
 
 reused_existing = False
 sbx = None
@@ -940,15 +963,20 @@ try:
             sbx = Sandbox.connect(sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create()
+            sbx = Sandbox.create(timeout=effective_ttl)
     elif not new_sandbox and fallback_sbx_id:
         try:
             sbx = Sandbox.connect(fallback_sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create()
+            sbx = Sandbox.create(timeout=effective_ttl)
     else:
-        sbx = Sandbox.create()
+        sbx = Sandbox.create(timeout=effective_ttl)
+
+    try:
+        sbx.set_timeout(effective_ttl)
+    except Exception:
+        pass
 
     if act == "right":
         sbx.right_click(x_coord, y_coord)
@@ -986,7 +1014,7 @@ finally:
             sbx.kill()
         except Exception:
             pass
-`, escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox), action, x, y)
+`, escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox), action, x, y, ttlSeconds)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -1047,6 +1075,10 @@ func E2BDesktopType(t translations.TranslationHelperFunc) inventory.ServerTool {
 						Type:        "boolean",
 						Description: "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
 					},
+					"ttl_seconds": {
+						Type:        "integer",
+						Description: "Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed.",
+					},
 					"api_key": {
 						Type:        "string",
 						Description: "Optional E2B API Key.",
@@ -1061,6 +1093,7 @@ func E2BDesktopType(t translations.TranslationHelperFunc) inventory.ServerTool {
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
+			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
 
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
@@ -1082,6 +1115,8 @@ sbx_id = %s
 fallback_sbx_id = %s
 keep_alive = %s
 new_sandbox = %s
+ttl_seconds = %d
+effective_ttl = ttl_seconds if ttl_seconds > 0 else 900
 
 reused_existing = False
 sbx = None
@@ -1092,15 +1127,20 @@ try:
             sbx = Sandbox.connect(sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create()
+            sbx = Sandbox.create(timeout=effective_ttl)
     elif not new_sandbox and fallback_sbx_id:
         try:
             sbx = Sandbox.connect(fallback_sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create()
+            sbx = Sandbox.create(timeout=effective_ttl)
     else:
-        sbx = Sandbox.create()
+        sbx = Sandbox.create(timeout=effective_ttl)
+
+    try:
+        sbx.set_timeout(effective_ttl)
+    except Exception:
+        pass
 
     if text_to_type:
         sbx.write(text_to_type)
@@ -1134,7 +1174,7 @@ finally:
             sbx.kill()
         except Exception:
             pass
-`, escapePyString(text), escapePyString(key), escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox))
+`, escapePyString(text), escapePyString(key), escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox), ttlSeconds)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -1191,6 +1231,10 @@ func E2BReadFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 						Type:        "boolean",
 						Description: "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
 					},
+					"ttl_seconds": {
+						Type:        "integer",
+						Description: "Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed.",
+					},
 					"api_key": {
 						Type:        "string",
 						Description: "Optional E2B API Key.",
@@ -1208,6 +1252,7 @@ func E2BReadFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
+			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
 
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
@@ -1228,6 +1273,8 @@ sbx_id = %s
 fallback_sbx_id = %s
 keep_alive = %s
 new_sandbox = %s
+ttl_seconds = %d
+effective_ttl = ttl_seconds if ttl_seconds > 0 else 900
 
 reused_existing = False
 sbx = None
@@ -1238,15 +1285,20 @@ try:
             sbx = Sandbox.connect(sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create()
+            sbx = Sandbox.create(timeout=effective_ttl)
     elif not new_sandbox and fallback_sbx_id:
         try:
             sbx = Sandbox.connect(fallback_sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create()
+            sbx = Sandbox.create(timeout=effective_ttl)
     else:
-        sbx = Sandbox.create()
+        sbx = Sandbox.create(timeout=effective_ttl)
+
+    try:
+        sbx.set_timeout(effective_ttl)
+    except Exception:
+        pass
 
     content = sbx.files.read(path)
     is_persistent = bool(sbx_id) or keep_alive or reused_existing
@@ -1276,7 +1328,7 @@ finally:
             sbx.kill()
         except Exception:
             pass
-`, escapePyString(path), escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox))
+`, escapePyString(path), escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox), ttlSeconds)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -1337,6 +1389,10 @@ func E2BWriteFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 						Type:        "boolean",
 						Description: "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
 					},
+					"ttl_seconds": {
+						Type:        "integer",
+						Description: "Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed.",
+					},
 					"api_key": {
 						Type:        "string",
 						Description: "Optional E2B API Key.",
@@ -1358,6 +1414,7 @@ func E2BWriteFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
+			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
 
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
@@ -1379,6 +1436,8 @@ sbx_id = %s
 fallback_sbx_id = %s
 keep_alive = %s
 new_sandbox = %s
+ttl_seconds = %d
+effective_ttl = ttl_seconds if ttl_seconds > 0 else 900
 
 reused_existing = False
 sbx = None
@@ -1389,15 +1448,20 @@ try:
             sbx = Sandbox.connect(sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create()
+            sbx = Sandbox.create(timeout=effective_ttl)
     elif not new_sandbox and fallback_sbx_id:
         try:
             sbx = Sandbox.connect(fallback_sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create()
+            sbx = Sandbox.create(timeout=effective_ttl)
     else:
-        sbx = Sandbox.create()
+        sbx = Sandbox.create(timeout=effective_ttl)
+
+    try:
+        sbx.set_timeout(effective_ttl)
+    except Exception:
+        pass
 
     sbx.files.write(path, content)
     is_persistent = bool(sbx_id) or keep_alive or reused_existing
@@ -1427,7 +1491,7 @@ finally:
             sbx.kill()
         except Exception:
             pass
-`, escapePyString(path), escapePyString(content), escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox))
+`, escapePyString(path), escapePyString(content), escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox), ttlSeconds)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -1484,6 +1548,10 @@ func E2BListDir(t translations.TranslationHelperFunc) inventory.ServerTool {
 						Type:        "boolean",
 						Description: "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
 					},
+					"ttl_seconds": {
+						Type:        "integer",
+						Description: "Optional maximum allowed idle TTL in seconds (default 900 = 15 minutes) before the sandbox is automatically destroyed.",
+					},
 					"api_key": {
 						Type:        "string",
 						Description: "Optional E2B API Key.",
@@ -1500,6 +1568,7 @@ func E2BListDir(t translations.TranslationHelperFunc) inventory.ServerTool {
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
+			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
 
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
@@ -1520,6 +1589,8 @@ sbx_id = %s
 fallback_sbx_id = %s
 keep_alive = %s
 new_sandbox = %s
+ttl_seconds = %d
+effective_ttl = ttl_seconds if ttl_seconds > 0 else 900
 
 reused_existing = False
 sbx = None
@@ -1530,15 +1601,20 @@ try:
             sbx = Sandbox.connect(sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create()
+            sbx = Sandbox.create(timeout=effective_ttl)
     elif not new_sandbox and fallback_sbx_id:
         try:
             sbx = Sandbox.connect(fallback_sbx_id)
             reused_existing = True
         except Exception:
-            sbx = Sandbox.create()
+            sbx = Sandbox.create(timeout=effective_ttl)
     else:
-        sbx = Sandbox.create()
+        sbx = Sandbox.create(timeout=effective_ttl)
+
+    try:
+        sbx.set_timeout(effective_ttl)
+    except Exception:
+        pass
 
     files = sbx.files.list(path)
     res = [f"{f.name} ({'dir' if f.is_dir else 'file'})" for f in files]
@@ -1569,7 +1645,7 @@ finally:
             sbx.kill()
         except Exception:
             pass
-`, escapePyString(path), escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox))
+`, escapePyString(path), escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox), ttlSeconds)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
