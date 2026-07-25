@@ -53,8 +53,20 @@ func runE2BPythonScript(apiKey, pyCode string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
-	if ctx.Err() == context.DeadlineExceeded {
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("failed to start python runner: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case <-ctx.Done():
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
 		partialOut := strings.TrimSpace(stdout.String())
 		if partialOut == "" {
 			partialOut = strings.TrimSpace(stderr.String())
@@ -63,17 +75,16 @@ func runE2BPythonScript(apiKey, pyCode string) (string, error) {
 			"Note: Heroku HTTP router enforces a strict 30s timeout on web requests.\n" +
 			"For long builds or compilation, set 'background': true on e2b_run_command, or break commands into smaller steps.\n" +
 			"Partial Output Collected:\n%s", partialOut), nil
-	}
-
-	if err != nil {
-		errStr := stderr.String()
-		if errStr == "" {
-			errStr = stdout.String()
+	case err := <-done:
+		if err != nil {
+			errStr := stderr.String()
+			if errStr == "" {
+				errStr = stdout.String()
+			}
+			return "", fmt.Errorf("python execution error: %v (details: %s)", err, errStr)
 		}
-		return "", fmt.Errorf("python execution error: %v (details: %s)", err, errStr)
+		return strings.TrimSpace(stdout.String()), nil
 	}
-
-	return strings.TrimSpace(stdout.String()), nil
 }
 
 // 1. E2BRunCode: Code Interpreter execution (supports persistent sandbox_id / keep_alive)
