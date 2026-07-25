@@ -152,6 +152,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.With(withToolset, withReadonly).Mount("/x/{toolset}/readonly", h)
 	r.With(withToolset, withInsiders).Mount("/x/{toolset}/insiders", h)
 	r.With(withToolset, withReadonly, withInsiders).Mount("/x/{toolset}/readonly/insiders", h)
+
+	// WebSocket endpoint for persistent connection clients
+	r.Get("/ws", h.ServeWebSocket)
 }
 
 // withReadonly is middleware that sets readonly mode in the request context
