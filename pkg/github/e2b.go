@@ -231,7 +231,7 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 			Description: t("TOOL_E2B_RUN_CODE_DESCRIPTION", "Run Python code inside official E2B Code Interpreter cloud sandbox. Set 'keep_alive': true to persist the sandbox. Note: keep_alive bills for wall-clock uptime; call e2b_kill_sandbox when finished."),
 			Annotations: &mcp.ToolAnnotations{
 				Title:        t("TOOL_E2B_RUN_CODE_TITLE", "Run Code in E2B Sandbox"),
-				ReadOnlyHint: ToBoolPtr(false),
+				ReadOnlyHint: false,
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
@@ -417,7 +417,7 @@ func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 			Description: t("TOOL_E2B_RUN_COMMAND_DESCRIPTION", "Run terminal commands inside an E2B cloud sandbox. Set 'keep_alive': true to persist the sandbox session. Non-zero command exit codes return structured output with isError: false. CRITICAL: For long-running builds or compilation (like 'go build', 'npm install', 'docker build'), ALWAYS set 'background': true."),
 			Annotations: &mcp.ToolAnnotations{
 				Title:        t("TOOL_E2B_RUN_COMMAND_TITLE", "Run Command in E2B"),
-				ReadOnlyHint: ToBoolPtr(false),
+				ReadOnlyHint: false,
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
@@ -620,7 +620,7 @@ func E2BListSandboxes(t translations.TranslationHelperFunc) inventory.ServerTool
 			Description: t("TOOL_E2B_LIST_SANDBOXES_DESCRIPTION", "List all active and paused E2B cloud sandboxes for your account. Lifecycle state machine: running -> paused -> destroyed. Best practice: Call this tool at the start of a session to discover reusable sandboxes, and at the end of a task to verify no billed VMs remain running."),
 			Annotations: &mcp.ToolAnnotations{
 				Title:        t("TOOL_E2B_LIST_SANDBOXES_TITLE", "List E2B Sandboxes"),
-				ReadOnlyHint: ToBoolPtr(false),
+				ReadOnlyHint: false,
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
@@ -724,7 +724,7 @@ func E2BDesktopScreenshot(t translations.TranslationHelperFunc) inventory.Server
 			Description: t("TOOL_E2B_DESKTOP_SCREENSHOT_DESCRIPTION", "Take a screenshot of official E2B Cloud Desktop GUI (Linux XFCE). Set 'keep_alive': true to persist the desktop sandbox session."),
 			Annotations: &mcp.ToolAnnotations{
 				Title:        t("TOOL_E2B_DESKTOP_SCREENSHOT_TITLE", "Take E2B Desktop Screenshot"),
-				ReadOnlyHint: ToBoolPtr(false),
+				ReadOnlyHint: false,
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
@@ -875,7 +875,7 @@ func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool 
 			Description: t("TOOL_E2B_DESKTOP_CLICK_DESCRIPTION", "Perform mouse click at (x, y) on E2B Cloud Desktop GUI. Set 'keep_alive': true to persist the desktop sandbox session."),
 			Annotations: &mcp.ToolAnnotations{
 				Title:        t("TOOL_E2B_DESKTOP_CLICK_TITLE", "Click on E2B Desktop"),
-				ReadOnlyHint: ToBoolPtr(false),
+				ReadOnlyHint: false,
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
@@ -1056,7 +1056,7 @@ func E2BDesktopType(t translations.TranslationHelperFunc) inventory.ServerTool {
 			Description: t("TOOL_E2B_DESKTOP_TYPE_DESCRIPTION", "Type text or press keys on E2B Cloud Desktop GUI. Set 'keep_alive': true to persist the desktop sandbox session."),
 			Annotations: &mcp.ToolAnnotations{
 				Title:        t("TOOL_E2B_DESKTOP_TYPE_TITLE", "Type on E2B Desktop"),
-				ReadOnlyHint: ToBoolPtr(false),
+				ReadOnlyHint: false,
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
@@ -1217,7 +1217,7 @@ func E2BReadFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 			Description: t("TOOL_E2B_READ_FILE_DESCRIPTION", "Read file contents from sandbox. Set 'keep_alive': true to persist the sandbox session."),
 			Annotations: &mcp.ToolAnnotations{
 				Title:        t("TOOL_E2B_READ_FILE_TITLE", "Read File from E2B Sandbox"),
-				ReadOnlyHint: ToBoolPtr(false),
+				ReadOnlyHint: false,
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
@@ -1372,7 +1372,7 @@ func E2BWriteFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 			Description: t("TOOL_E2B_WRITE_FILE_DESCRIPTION", "Write text content to a file in sandbox. Set 'keep_alive': true to persist the sandbox session."),
 			Annotations: &mcp.ToolAnnotations{
 				Title:        t("TOOL_E2B_WRITE_FILE_TITLE", "Write File in E2B Sandbox"),
-				ReadOnlyHint: ToBoolPtr(false),
+				ReadOnlyHint: false,
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
@@ -1536,7 +1536,7 @@ func E2BListDir(t translations.TranslationHelperFunc) inventory.ServerTool {
 			Description: t("TOOL_E2B_LIST_DIR_DESCRIPTION", "List files and directory contents inside sandbox. Set 'keep_alive': true to persist the sandbox session."),
 			Annotations: &mcp.ToolAnnotations{
 				Title:        t("TOOL_E2B_LIST_DIR_TITLE", "List Directory in E2B Sandbox"),
-				ReadOnlyHint: ToBoolPtr(false),
+				ReadOnlyHint: false,
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
@@ -1691,7 +1691,7 @@ func E2BKillSandbox(t translations.TranslationHelperFunc) inventory.ServerTool {
 			Description: t("TOOL_E2B_KILL_SANDBOX_DESCRIPTION", "Explicitly terminate and destroy an active persistent E2B cloud sandbox VM by its sandbox_id. Lifecycle state machine: running -> paused -> destroyed. Returns success if target sandbox is already paused or destroyed."),
 			Annotations: &mcp.ToolAnnotations{
 				Title:        t("TOOL_E2B_KILL_SANDBOX_TITLE", "Kill E2B Sandbox"),
-				ReadOnlyHint: ToBoolPtr(false),
+				ReadOnlyHint: false,
 			},
 			InputSchema: &jsonschema.Schema{
 				Type: "object",
