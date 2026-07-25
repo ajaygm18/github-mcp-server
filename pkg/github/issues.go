@@ -1119,6 +1119,12 @@ func ListIssueTypes(t translations.TranslationHelperFunc) inventory.ServerTool {
 				var issueTypes []*github.IssueType
 				resp, err := client.Do(req, &issueTypes)
 				if err != nil {
+					// Repos without issue types enabled return 404. That is an
+					// absence of data, not a failure, so report an empty list.
+					if resp != nil && resp.StatusCode == http.StatusNotFound {
+						_ = resp.Body.Close()
+						return utils.NewToolResultText("[]"), nil, nil
+					}
 					return ghErrors.NewGitHubAPIErrorResponse(ctx, "failed to list issue types", resp, err), nil, nil
 				}
 				defer func() { _ = resp.Body.Close() }()
@@ -1143,6 +1149,12 @@ func ListIssueTypes(t translations.TranslationHelperFunc) inventory.ServerTool {
 
 			issueTypes, resp, err := client.Organizations.ListIssueTypes(ctx, owner)
 			if err != nil {
+				// Owners that are users, or orgs without issue types enabled,
+				// return 404. Report that as an empty list rather than an error.
+				if resp != nil && resp.StatusCode == http.StatusNotFound {
+					_ = resp.Body.Close()
+					return utils.NewToolResultText("[]"), nil, nil
+				}
 				return utils.NewToolResultErrorFromErr("failed to list issue types", err), nil, nil
 			}
 			defer func() { _ = resp.Body.Close() }()
