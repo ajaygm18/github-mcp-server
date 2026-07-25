@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/github/github-mcp-server/internal/profiler"
 	buffer "github.com/github/github-mcp-server/pkg/buffer"
@@ -385,6 +386,11 @@ Use this tool to list workflows in a repository, or list workflow runs, jobs, an
 						Description: "Results per page for pagination (default: 30, max: 100)",
 						Minimum:     jsonschema.Ptr(1.0),
 						Maximum:     jsonschema.Ptr(100.0),
+					},
+					"minimal_output": {
+						Type:        "boolean",
+						Description: "Return only the fields needed to identify and triage each run, omitting the embedded repository and actor objects. **ONLY** used when method is 'list_workflow_runs'. Default false",
+						Default:     json.RawMessage(`false`),
 					},
 				},
 				Required: []string{"method", "owner", "repo"},
@@ -912,6 +918,60 @@ func listWorkflows(ctx context.Context, client *github.Client, owner, repo strin
 	return utils.NewToolResultText(string(r)), nil, nil
 }
 
+// minimalWorkflowRun is the compact projection of a workflow run returned when
+// minimal_output is set. A full run object embeds the repository twice plus an
+// actor and a triggering actor, so a page of runs is mostly the same URL
+// templates repeated. These fields are what identifying and triaging a run
+// actually requires.
+type minimalWorkflowRun struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	DisplayTitle string `json:"display_title"`
+	Path         string `json:"path"`
+	WorkflowID   int64  `json:"workflow_id"`
+	RunNumber    int    `json:"run_number"`
+	RunAttempt   int    `json:"run_attempt"`
+	Event        string `json:"event"`
+	Status       string `json:"status"`
+	Conclusion   string `json:"conclusion"`
+	HeadBranch   string `json:"head_branch"`
+	HeadSHA      string `json:"head_sha"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+	HTMLURL      string `json:"html_url"`
+}
+
+// toMinimalWorkflowRuns projects a page of workflow runs onto minimalWorkflowRun.
+func toMinimalWorkflowRuns(runs *github.WorkflowRuns) map[string]any {
+	projected := []minimalWorkflowRun{}
+	if runs == nil {
+		return map[string]any{"total_count": 0, "workflow_runs": projected}
+	}
+	for _, run := range runs.WorkflowRuns {
+		if run == nil {
+			continue
+		}
+		projected = append(projected, minimalWorkflowRun{
+			ID:           run.GetID(),
+			Name:         run.GetName(),
+			DisplayTitle: run.GetDisplayTitle(),
+			Path:         run.GetPath(),
+			WorkflowID:   run.GetWorkflowID(),
+			RunNumber:    run.GetRunNumber(),
+			RunAttempt:   run.GetRunAttempt(),
+			Event:        run.GetEvent(),
+			Status:       run.GetStatus(),
+			Conclusion:   run.GetConclusion(),
+			HeadBranch:   run.GetHeadBranch(),
+			HeadSHA:      run.GetHeadSHA(),
+			CreatedAt:    run.GetCreatedAt().Format(time.RFC3339),
+			UpdatedAt:    run.GetUpdatedAt().Format(time.RFC3339),
+			HTMLURL:      run.GetHTMLURL(),
+		})
+	}
+	return map[string]any{"total_count": runs.GetTotalCount(), "workflow_runs": projected}
+}
+
 func listWorkflowRuns(ctx context.Context, client *github.Client, args map[string]any, owner, repo, resourceID string, pagination PaginationParams) (*mcp.CallToolResult, any, error) {
 	filterArgs, err := OptionalParam[map[string]any](args, "workflow_runs_filter")
 	if err != nil {
@@ -954,7 +1014,16 @@ func listWorkflowRuns(ctx context.Context, client *github.Client, args map[strin
 	}
 
 	defer func() { _ = resp.Body.Close() }()
-	r, err := json.Marshal(workflowRuns)
+	var payload any = workflowRuns
+	minimal, err := OptionalParam[bool](args, "minimal_output")
+	if err != nil {
+		return utils.NewToolResultError(err.Error()), nil, nil
+	}
+	if minimal {
+		payload = toMinimalWorkflowRuns(workflowRuns)
+	}
+
+	r, err := json.Marshal(payload)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to marshal workflow runs: %w", err)
 	}
