@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/github/github-mcp-server/pkg/inventory"
@@ -25,6 +28,103 @@ var ToolsetMetadataE2B = inventory.ToolsetMetadata{
 	Icon:        "terminal",
 }
 
+// Session & active sandbox memory tracking
+type sandboxTracker struct {
+	mu                  sync.Mutex
+	lastActiveSandboxID string
+	lastActiveTime      time.Time
+}
+
+var globalSandboxTracker sandboxTracker
+var startReaperOnce sync.Once
+
+func getLastActiveSandboxID() string {
+	globalSandboxTracker.mu.Lock()
+	defer globalSandboxTracker.mu.Unlock()
+	return globalSandboxTracker.lastActiveSandboxID
+}
+
+func updateLastActiveSandboxID(id string) {
+	if id == "" {
+		return
+	}
+	globalSandboxTracker.mu.Lock()
+	defer globalSandboxTracker.mu.Unlock()
+	globalSandboxTracker.lastActiveSandboxID = id
+	globalSandboxTracker.lastActiveTime = time.Now()
+}
+
+func clearLastActiveSandboxID(id string) {
+	globalSandboxTracker.mu.Lock()
+	defer globalSandboxTracker.mu.Unlock()
+	if id == "" || globalSandboxTracker.lastActiveSandboxID == id {
+		globalSandboxTracker.lastActiveSandboxID = ""
+	}
+}
+
+// Start automatic server-side idle reaper
+func initIdleReaper() {
+	startReaperOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(1 * time.Minute)
+			defer ticker.Stop()
+			for range ticker.C {
+				reapIdleSandboxes()
+			}
+		}()
+	})
+}
+
+func reapIdleSandboxes() {
+	apiKey := os.Getenv("E2B_API_KEY")
+	if apiKey == "" {
+		return
+	}
+
+	idleMinutesStr := os.Getenv("E2B_IDLE_REAPER_MINUTES")
+	idleMinutes := 15
+	if m, err := strconv.Atoi(idleMinutesStr); err == nil && m > 0 {
+		idleMinutes = m
+	}
+
+	pyScript := fmt.Sprintf(`
+import os, json
+from e2b import Sandbox
+from datetime import datetime, timezone
+
+max_idle_sec = %d * 60
+try:
+    pag = Sandbox.list()
+    items = pag.next_items()
+    now = datetime.now(timezone.utc)
+    reaped = []
+    for i in items:
+        if i.started_at:
+            uptime = (now - i.started_at).total_seconds()
+            if uptime > max_idle_sec:
+                try:
+                    sbx = Sandbox.connect(i.sandbox_id)
+                    sbx.kill()
+                    reaped.append(i.sandbox_id)
+                except Exception:
+                    pass
+    print("REAPED:" + json.dumps(reaped))
+except Exception:
+    pass
+`, idleMinutes)
+
+	out, err := runE2BPythonScript(apiKey, pyScript)
+	if err == nil && strings.Contains(out, "REAPED:") {
+		idx := strings.Index(out, "REAPED:")
+		var reaped []string
+		_ = json.Unmarshal([]byte(out[idx+len("REAPED:"):]), &reaped)
+		for _, id := range reaped {
+			slog.Info("[E2B Idle Reaper] Auto-destroyed expired sandbox", "sandbox_id", id)
+			clearLastActiveSandboxID(id)
+		}
+	}
+}
+
 func getE2BAPIKey(args map[string]any) string {
 	if apiKey, ok := args["api_key"].(string); ok && apiKey != "" {
 		return apiKey
@@ -39,7 +139,39 @@ func pyBool(b bool) string {
 	return "False"
 }
 
+type e2bJSONResponse struct {
+	Status         string           `json:"status"`
+	SandboxID      string           `json:"sandbox_id"`
+	ReusedExisting bool             `json:"reused_existing"`
+	ExitCode       int              `json:"exit_code"`
+	PID            *int             `json:"pid,omitempty"`
+	Stdout         string           `json:"stdout"`
+	Stderr         string           `json:"stderr"`
+	ExecutionError string           `json:"execution_error,omitempty"`
+	Results        []string         `json:"results,omitempty"`
+	DurationMS     int              `json:"duration_ms"`
+	IsPersistent   bool             `json:"is_persistent"`
+	Message        string           `json:"message,omitempty"`
+	Error          string           `json:"error,omitempty"`
+	Sandboxes      []map[string]any `json:"sandboxes,omitempty"`
+}
+
+func parseE2BJSONResponse(output string) (*e2bJSONResponse, error) {
+	startIdx := strings.Index(output, "---E2B_JSON_START---")
+	endIdx := strings.Index(output, "---E2B_JSON_END---")
+	if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+		jsonStr := strings.TrimSpace(output[startIdx+len("---E2B_JSON_START---") : endIdx])
+		var resp e2bJSONResponse
+		if err := json.Unmarshal([]byte(jsonStr), &resp); err == nil {
+			return &resp, nil
+		}
+	}
+	return nil, fmt.Errorf("raw output: %s", output)
+}
+
 func runE2BPythonScript(apiKey, pyCode string) (string, error) {
+	initIdleReaper()
+
 	// Heroku router enforces a strict 30-second H12 timeout on all HTTP requests.
 	// We set a 24-second server-side timeout so we intercept execution BEFORE
 	// Heroku cuts the connection and outputs an HTML 503 error page.
@@ -81,19 +213,22 @@ func runE2BPythonScript(apiKey, pyCode string) (string, error) {
 			if errStr == "" {
 				errStr = stdout.String()
 			}
-			return "", fmt.Errorf("python execution error: %v (details: %s)", err, errStr)
+			// Clean up raw python stack traces for infrastructure errors
+			lines := strings.Split(strings.TrimSpace(errStr), "\n")
+			cleanMsg := lines[len(lines)-1]
+			return "", fmt.Errorf("%s", cleanMsg)
 		}
 		return strings.TrimSpace(stdout.String()), nil
 	}
 }
 
-// 1. E2BRunCode: Code Interpreter execution (supports persistent sandbox_id / keep_alive)
+// 1. E2BRunCode: Code Interpreter execution
 func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_run_code",
-			Description: t("TOOL_E2B_RUN_CODE_DESCRIPTION", "Run Python code inside official E2B Code Interpreter cloud sandbox. Set 'keep_alive': true or pass 'sandbox_id' for multi-step persistent sessions."),
+			Description: t("TOOL_E2B_RUN_CODE_DESCRIPTION", "Run Python code inside official E2B Code Interpreter cloud sandbox. Set 'keep_alive': true to persist the sandbox. Note: keep_alive bills for wall-clock uptime; call e2b_kill_sandbox when finished."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_RUN_CODE_TITLE", "Run Code in E2B Sandbox"),
 			},
@@ -106,11 +241,19 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 					},
 					"sandbox_id": {
 						Type:        "string",
-						Description: "Optional existing E2B sandbox ID to re-use for persistent multi-step sessions",
+						Description: "Existing E2B sandbox ID to reuse. If you created a sandbox earlier in this session, you must pass its ID here. Omitting it reuses the most recent active sandbox unless new_sandbox is true.",
 					},
 					"keep_alive": {
 						Type:        "boolean",
-						Description: "Set true to keep the sandbox alive for subsequent commands instead of auto-killing it",
+						Description: "Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished.",
+					},
+					"new_sandbox": {
+						Type:        "boolean",
+						Description: "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
+					},
+					"ttl_seconds": {
+						Type:        "integer",
+						Description: "Optional maximum allowed idle TTL in seconds (e.g. 900 for 15 minutes) before the sandbox is automatically destroyed.",
 					},
 					"api_key": {
 						Type:        "string",
@@ -128,60 +271,149 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 			}
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
+			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
+			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
 			}
 
+			fallbackID := ""
+			if sandboxID == "" && !newSandbox {
+				fallbackID = getLastActiveSandboxID()
+			}
+
 			pyScript := fmt.Sprintf(`
+import json, sys, time
 from e2b_code_interpreter import Sandbox
 
 code_to_run = %s
 sbx_id = %s
+fallback_sbx_id = %s
 keep_alive = %s
+new_sandbox = %s
+ttl_seconds = %d
 
-is_persistent = bool(sbx_id) or keep_alive
-if sbx_id:
-    try:
-        sbx = Sandbox.connect(sbx_id)
-    except Exception:
-        sbx = Sandbox.create()
-else:
-    sbx = Sandbox.create()
+reused_existing = False
+sbx = None
 
 try:
+    if sbx_id:
+        try:
+            sbx = Sandbox.connect(sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create(timeout=ttl_seconds if ttl_seconds > 0 else 900)
+    elif not new_sandbox and fallback_sbx_id:
+        try:
+            sbx = Sandbox.connect(fallback_sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create(timeout=ttl_seconds if ttl_seconds > 0 else 900)
+    else:
+        sbx = Sandbox.create(timeout=ttl_seconds if ttl_seconds > 0 else 900)
+
+    if ttl_seconds > 0 and reused_existing:
+        try:
+            sbx.set_timeout(ttl_seconds)
+        except Exception:
+            pass
+
+    t0 = time.time()
     execution = sbx.run_code(code_to_run)
-    stdout_text = "".join([str(l) for l in execution.logs.stdout])
-    stderr_text = "".join([str(l) for l in execution.logs.stderr])
-    out = stdout_text
-    if stderr_text:
-        out += "\nSTDERR:\n" + stderr_text
-    if not out and execution.results:
-        out = str(execution.results)
-    
-    print(f"[sandbox_id: {sbx.sandbox_id}]\n" + out)
+    stdout_txt = "".join([str(l) for l in execution.logs.stdout])
+    stderr_txt = "".join([str(l) for l in execution.logs.stderr])
+    error_txt = ""
+    if execution.error:
+        error_txt = f"{execution.error.name}: {execution.error.value}\n{execution.error.traceback}"
+
+    dur = int((time.time() - t0) * 1000)
+    is_persistent = bool(sbx_id) or keep_alive or reused_existing
+
+    res_payload = {
+        "status": "success",
+        "sandbox_id": sbx.sandbox_id,
+        "reused_existing": reused_existing,
+        "stdout": stdout_txt,
+        "stderr": stderr_txt,
+        "execution_error": error_txt,
+        "results": [str(r) for r in execution.results] if execution.results else [],
+        "duration_ms": dur,
+        "is_persistent": is_persistent
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
+except Exception as infra_err:
+    clean_msg = str(infra_err).split("\n")[0]
+    res_payload = {
+        "status": "infrastructure_error",
+        "error": clean_msg,
+        "sandbox_id": sbx.sandbox_id if sbx else ""
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
 finally:
-    if not is_persistent:
-        sbx.kill()
-`, escapePyString(code), escapePyString(sandboxID), pyBool(keepAlive))
+    if sbx and not (bool(sbx_id) or keep_alive or reused_existing):
+        try:
+            sbx.kill()
+        except Exception:
+            pass
+`, escapePyString(code), escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox), ttlSeconds)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
-				return utils.NewToolResultError(fmt.Sprintf("E2B Run Code Error: %v", err)), nil, nil
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %v", err)), nil, nil
 			}
 
-			return utils.NewToolResultText(output), nil, nil
+			parsed, parseErr := parseE2BJSONResponse(output)
+			if parseErr != nil || parsed.Status == "infrastructure_error" {
+				errMsg := output
+				if parsed != nil && parsed.Error != "" {
+					errMsg = parsed.Error
+				}
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %s", errMsg)), nil, nil
+			}
+
+			if parsed.IsPersistent {
+				updateLastActiveSandboxID(parsed.SandboxID)
+			} else {
+				clearLastActiveSandboxID(parsed.SandboxID)
+			}
+
+			resJSON, _ := json.MarshalIndent(map[string]any{
+				"sandbox_id":      parsed.SandboxID,
+				"reused_existing": parsed.ReusedExisting,
+				"stdout":          parsed.Stdout,
+				"stderr":          parsed.Stderr,
+				"execution_error": parsed.ExecutionError,
+				"results":         parsed.Results,
+				"duration_ms":     parsed.DurationMS,
+			}, "", "  ")
+
+			outText := fmt.Sprintf("[sandbox_id: %s] [reused_existing: %v] [duration: %dms]\n\nSTDOUT:\n%s",
+				parsed.SandboxID, parsed.ReusedExisting, parsed.DurationMS, parsed.Stdout)
+			if parsed.Stderr != "" {
+				outText += "\n\nSTDERR:\n" + parsed.Stderr
+			}
+			if parsed.ExecutionError != "" {
+				outText += "\n\nEXECUTION_ERROR:\n" + parsed.ExecutionError
+			}
+			outText += "\n\nStructured Result:\n" + string(resJSON)
+
+			return utils.NewToolResultText(outText), nil, nil
 		},
 	)
 }
 
-// 2. E2BRunCommand: Terminal command execution (supports persistent sandbox_id / keep_alive)
+// 2. E2BRunCommand: Terminal command execution
 func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_run_command",
-			Description: t("TOOL_E2B_RUN_COMMAND_DESCRIPTION", "Run terminal commands inside an E2B cloud sandbox. Set 'keep_alive': true or pass 'sandbox_id' for multi-step persistent sessions. CRITICAL: For long-running builds or compilation (like 'go build', 'npm install', 'docker build'), ALWAYS set 'background': true to prevent HTTP timeouts."),
+			Description: t("TOOL_E2B_RUN_COMMAND_DESCRIPTION", "Run terminal commands inside an E2B cloud sandbox. Set 'keep_alive': true to persist the sandbox session. Non-zero command exit codes return structured output with isError: false. CRITICAL: For long-running builds or compilation (like 'go build', 'npm install', 'docker build'), ALWAYS set 'background': true."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_RUN_COMMAND_TITLE", "Run Command in E2B"),
 			},
@@ -194,15 +426,23 @@ func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 					},
 					"sandbox_id": {
 						Type:        "string",
-						Description: "Optional existing E2B sandbox ID for persistent multi-command sessions",
+						Description: "Existing E2B sandbox ID to reuse. If you created a sandbox earlier in this session, you must pass its ID here. Omitting it reuses the most recent active sandbox unless new_sandbox is true.",
 					},
 					"keep_alive": {
 						Type:        "boolean",
-						Description: "Set true to keep the sandbox alive for subsequent commands instead of auto-killing it",
+						Description: "Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished.",
+					},
+					"new_sandbox": {
+						Type:        "boolean",
+						Description: "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
 					},
 					"background": {
 						Type:        "boolean",
 						Description: "Set true for long-running builds/compilations to run in background asynchronously without blocking or timing out",
+					},
+					"ttl_seconds": {
+						Type:        "integer",
+						Description: "Optional maximum allowed idle TTL in seconds (e.g. 900 for 15 minutes) before the sandbox is automatically destroyed.",
 					},
 					"api_key": {
 						Type:        "string",
@@ -220,61 +460,261 @@ func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 			}
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
+			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
 			background, _ := OptionalParam[bool](args, "background")
+			ttlSeconds, _ := OptionalParam[int](args, "ttl_seconds")
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
 			}
 
+			fallbackID := ""
+			if sandboxID == "" && !newSandbox {
+				fallbackID = getLastActiveSandboxID()
+			}
+
 			pyScript := fmt.Sprintf(`
-from e2b import Sandbox
+import json, sys, time
+from e2b import Sandbox, CommandExitException
 
 cmd_to_run = %s
 sbx_id = %s
+fallback_sbx_id = %s
 keep_alive = %s
+new_sandbox = %s
 is_background = %s
+ttl_seconds = %d
 
-is_persistent = bool(sbx_id) or keep_alive or is_background
-if sbx_id:
-    try:
-        sbx = Sandbox.connect(sbx_id)
-    except Exception:
-        sbx = Sandbox.create()
-else:
-    sbx = Sandbox.create()
+reused_existing = False
+sbx = None
 
 try:
+    if sbx_id:
+        try:
+            sbx = Sandbox.connect(sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create(timeout=ttl_seconds if ttl_seconds > 0 else 900)
+    elif not new_sandbox and fallback_sbx_id:
+        try:
+            sbx = Sandbox.connect(fallback_sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create(timeout=ttl_seconds if ttl_seconds > 0 else 900)
+    else:
+        sbx = Sandbox.create(timeout=ttl_seconds if ttl_seconds > 0 else 900)
+
+    if ttl_seconds > 0 and reused_existing:
+        try:
+            sbx.set_timeout(ttl_seconds)
+        except Exception:
+            pass
+
+    t0 = time.time()
+    exit_code = 0
+    stdout_txt = ""
+    stderr_txt = ""
+    pid = None
+
     if is_background:
         res = sbx.commands.run(cmd_to_run, background=True)
-        print(f"[sandbox_id: {sbx.sandbox_id}]\nCommand successfully launched in background!\nProcess PID: {res.pid}")
+        pid = getattr(res, "pid", None)
+        stdout_txt = f"Command successfully launched in background (PID: {pid})"
     else:
-        res = sbx.commands.run(cmd_to_run)
-        out = res.stdout
-        if res.stderr:
-            out += "\nSTDERR:\n" + res.stderr
-        print(f"[sandbox_id: {sbx.sandbox_id}]\n" + out)
+        try:
+            res = sbx.commands.run(cmd_to_run)
+            exit_code = getattr(res, "exit_code", 0)
+            stdout_txt = getattr(res, "stdout", "") or ""
+            stderr_txt = getattr(res, "stderr", "") or ""
+        except CommandExitException as e:
+            exit_code = getattr(e, "exit_code", 1)
+            stdout_txt = getattr(e, "stdout", "") or ""
+            stderr_txt = getattr(e, "stderr", "") or getattr(e, "error", "") or str(e)
+
+    dur = int((time.time() - t0) * 1000)
+    is_persistent = bool(sbx_id) or keep_alive or is_background or reused_existing
+
+    res_payload = {
+        "status": "success",
+        "sandbox_id": sbx.sandbox_id,
+        "reused_existing": reused_existing,
+        "exit_code": exit_code,
+        "stdout": stdout_txt,
+        "stderr": stderr_txt,
+        "duration_ms": dur,
+        "is_persistent": is_persistent
+    }
+    if pid is not None:
+        res_payload["pid"] = pid
+
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
+except Exception as infra_err:
+    clean_msg = str(infra_err).split("\n")[0]
+    res_payload = {
+        "status": "infrastructure_error",
+        "error": clean_msg,
+        "sandbox_id": sbx.sandbox_id if sbx else ""
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
 finally:
-    if not is_persistent:
-        sbx.kill()
-`, escapePyString(command), escapePyString(sandboxID), pyBool(keepAlive), pyBool(background))
+    if sbx and not (bool(sbx_id) or keep_alive or is_background or reused_existing):
+        try:
+            sbx.kill()
+        except Exception:
+            pass
+`, escapePyString(command), escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox), pyBool(background), ttlSeconds)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
-				return utils.NewToolResultError(fmt.Sprintf("E2B Run Command Error: %v", err)), nil, nil
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %v", err)), nil, nil
 			}
 
-			return utils.NewToolResultText(output), nil, nil
+			parsed, parseErr := parseE2BJSONResponse(output)
+			if parseErr != nil || parsed.Status == "infrastructure_error" {
+				errMsg := output
+				if parsed != nil && parsed.Error != "" {
+					errMsg = parsed.Error
+				}
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %s", errMsg)), nil, nil
+			}
+
+			if parsed.IsPersistent {
+				updateLastActiveSandboxID(parsed.SandboxID)
+			} else {
+				clearLastActiveSandboxID(parsed.SandboxID)
+			}
+
+			resJSON, _ := json.MarshalIndent(map[string]any{
+				"sandbox_id":      parsed.SandboxID,
+				"reused_existing": parsed.ReusedExisting,
+				"exit_code":       parsed.ExitCode,
+				"stdout":          parsed.Stdout,
+				"stderr":          parsed.Stderr,
+				"duration_ms":     parsed.DurationMS,
+			}, "", "  ")
+
+			outText := fmt.Sprintf("[sandbox_id: %s] [reused_existing: %v] [exit_code: %d] [duration: %dms]\n\nSTDOUT:\n%s",
+				parsed.SandboxID, parsed.ReusedExisting, parsed.ExitCode, parsed.DurationMS, parsed.Stdout)
+			if parsed.Stderr != "" {
+				outText += "\n\nSTDERR:\n" + parsed.Stderr
+			}
+			outText += "\n\nStructured Result:\n" + string(resJSON)
+
+			return utils.NewToolResultText(outText), nil, nil
 		},
 	)
 }
 
-// 3. E2BDesktopScreenshot: Desktop GUI screenshot (supports persistent sandbox_id / keep_alive)
+// 3. E2BListSandboxes: Enumerate active and paused E2B cloud sandboxes
+func E2BListSandboxes(t translations.TranslationHelperFunc) inventory.ServerTool {
+	return NewTool(
+		ToolsetMetadataE2B,
+		mcp.Tool{
+			Name:        "e2b_list_sandboxes",
+			Description: t("TOOL_E2B_LIST_SANDBOXES_DESCRIPTION", "List all active and paused E2B cloud sandboxes for your account. Lifecycle state machine: running -> paused -> destroyed. Best practice: Call this tool at the start of a session to discover reusable sandboxes, and at the end of a task to verify no billed VMs remain running."),
+			Annotations: &mcp.ToolAnnotations{
+				Title: t("TOOL_E2B_LIST_SANDBOXES_TITLE", "List E2B Sandboxes"),
+			},
+			InputSchema: &jsonschema.Schema{
+				Type: "object",
+				Properties: map[string]*jsonschema.Schema{
+					"ttl_seconds": {
+						Type:        "integer",
+						Description: "Optional maximum allowed idle TTL in seconds before sandboxes are automatically destroyed.",
+					},
+					"api_key": {
+						Type:        "string",
+						Description: "Optional E2B API Key.",
+					},
+				},
+			},
+		},
+		[]scopes.Scope{},
+		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
+			apiKey := getE2BAPIKey(args)
+			if apiKey == "" {
+				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
+			}
+
+			pyScript := `
+import json, sys
+from e2b import Sandbox
+from datetime import datetime, timezone
+
+try:
+    pag = Sandbox.list()
+    items = pag.next_items()
+    now = datetime.now(timezone.utc)
+    sbx_list = []
+    for i in items:
+        st_at = getattr(i, "started_at", None)
+        uptime = 0
+        created_str = ""
+        if st_at:
+            created_str = st_at.isoformat()
+            uptime = int((now - st_at).total_seconds())
+        state_str = str(getattr(i, "state", "running"))
+        sbx_list.append({
+            "sandbox_id": getattr(i, "sandbox_id", ""),
+            "state": state_str,
+            "created_at": created_str,
+            "uptime_seconds": uptime,
+            "template": getattr(i, "template_id", "")
+        })
+    res_payload = {
+        "status": "success",
+        "sandboxes": sbx_list
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
+except Exception as infra_err:
+    clean_msg = str(infra_err).split("\n")[0]
+    res_payload = {
+        "status": "infrastructure_error",
+        "error": clean_msg
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
+`
+
+			output, err := runE2BPythonScript(apiKey, pyScript)
+			if err != nil {
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %v", err)), nil, nil
+			}
+
+			parsed, parseErr := parseE2BJSONResponse(output)
+			if parseErr != nil || parsed.Status == "infrastructure_error" {
+				errMsg := output
+				if parsed != nil && parsed.Error != "" {
+					errMsg = parsed.Error
+				}
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %s", errMsg)), nil, nil
+			}
+
+			resJSON, _ := json.MarshalIndent(map[string]any{
+				"total_sandboxes": len(parsed.Sandboxes),
+				"sandboxes":       parsed.Sandboxes,
+			}, "", "  ")
+
+			outText := fmt.Sprintf("Discovered %d E2B Cloud Sandboxes:\n\n%s", len(parsed.Sandboxes), string(resJSON))
+			return utils.NewToolResultText(outText), nil, nil
+		},
+	)
+}
+
+// 4. E2BDesktopScreenshot: Desktop GUI screenshot
 func E2BDesktopScreenshot(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_desktop_screenshot",
-			Description: t("TOOL_E2B_DESKTOP_SCREENSHOT_DESCRIPTION", "Take a screenshot of official E2B Cloud Desktop GUI (Linux XFCE). Set 'keep_alive': true or pass 'sandbox_id' for persistent sessions."),
+			Description: t("TOOL_E2B_DESKTOP_SCREENSHOT_DESCRIPTION", "Take a screenshot of official E2B Cloud Desktop GUI (Linux XFCE). Set 'keep_alive': true to persist the desktop sandbox session."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_DESKTOP_SCREENSHOT_TITLE", "Take E2B Desktop Screenshot"),
 			},
@@ -283,11 +723,15 @@ func E2BDesktopScreenshot(t translations.TranslationHelperFunc) inventory.Server
 				Properties: map[string]*jsonschema.Schema{
 					"sandbox_id": {
 						Type:        "string",
-						Description: "Optional existing E2B desktop sandbox ID",
+						Description: "Existing E2B sandbox ID to reuse. Omitting it reuses the most recent active sandbox unless new_sandbox is true.",
 					},
 					"keep_alive": {
 						Type:        "boolean",
-						Description: "Set true to keep the desktop sandbox alive for subsequent clicks/actions",
+						Description: "Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished.",
+					},
+					"new_sandbox": {
+						Type:        "boolean",
+						Description: "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
 					},
 					"api_key": {
 						Type:        "string",
@@ -300,55 +744,115 @@ func E2BDesktopScreenshot(t translations.TranslationHelperFunc) inventory.Server
 		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
+			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
 			}
 
+			fallbackID := ""
+			if sandboxID == "" && !newSandbox {
+				fallbackID = getLastActiveSandboxID()
+			}
+
 			pyScript := fmt.Sprintf(`
-import base64
+import base64, json, time
 from e2b_desktop import Sandbox
 
 sbx_id = %s
+fallback_sbx_id = %s
 keep_alive = %s
-is_persistent = bool(sbx_id) or keep_alive
+new_sandbox = %s
 
-if sbx_id:
-    try:
-        sbx = Sandbox.connect(sbx_id)
-    except Exception:
-        sbx = Sandbox.create()
-else:
-    sbx = Sandbox.create()
+reused_existing = False
+sbx = None
 
 try:
+    if sbx_id:
+        try:
+            sbx = Sandbox.connect(sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create()
+    elif not new_sandbox and fallback_sbx_id:
+        try:
+            sbx = Sandbox.connect(fallback_sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create()
+    else:
+        sbx = Sandbox.create()
+
     sbx.stream.start()
     vnc_url = sbx.stream.get_url()
     shot_bytes = sbx.screenshot()
     b64_str = base64.b64encode(shot_bytes).decode('utf-8')
-    print(f"[sandbox_id: {sbx.sandbox_id}]\nDesktop Screenshot Captured!\nLive Stream URL: {vnc_url}\nBase64 Length: {len(b64_str)}\nData Prefix: data:image/png;base64,{b64_str[:100]}...")
+    is_persistent = bool(sbx_id) or keep_alive or reused_existing
+
+    res_payload = {
+        "status": "success",
+        "sandbox_id": sbx.sandbox_id,
+        "reused_existing": reused_existing,
+        "vnc_url": vnc_url,
+        "base64_length": len(b64_str),
+        "data_prefix": f"data:image/png;base64,{b64_str[:100]}...",
+        "is_persistent": is_persistent
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
+except Exception as infra_err:
+    clean_msg = str(infra_err).split("\n")[0]
+    res_payload = {
+        "status": "infrastructure_error",
+        "error": clean_msg,
+        "sandbox_id": sbx.sandbox_id if sbx else ""
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
 finally:
-    if not is_persistent:
-        sbx.kill()
-`, escapePyString(sandboxID), pyBool(keepAlive))
+    if sbx and not (bool(sbx_id) or keep_alive or reused_existing):
+        try:
+            sbx.kill()
+        except Exception:
+            pass
+`, escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox))
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
-				return utils.NewToolResultError(fmt.Sprintf("Desktop Screenshot Error: %v", err)), nil, nil
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %v", err)), nil, nil
 			}
 
-			return utils.NewToolResultText(output), nil, nil
+			parsed, parseErr := parseE2BJSONResponse(output)
+			if parseErr != nil || parsed.Status == "infrastructure_error" {
+				errMsg := output
+				if parsed != nil && parsed.Error != "" {
+					errMsg = parsed.Error
+				}
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %s", errMsg)), nil, nil
+			}
+
+			if parsed.IsPersistent {
+				updateLastActiveSandboxID(parsed.SandboxID)
+			} else {
+				clearLastActiveSandboxID(parsed.SandboxID)
+			}
+
+			outText := fmt.Sprintf("[sandbox_id: %s] [reused_existing: %v]\nDesktop Screenshot Captured!\nLive Stream URL: %s\nData Prefix: %s",
+				parsed.SandboxID, parsed.ReusedExisting, output, output)
+			return utils.NewToolResultText(outText), nil, nil
 		},
 	)
 }
 
-// 4. E2BDesktopClick: Desktop GUI click (supports persistent sandbox_id / keep_alive)
+// 5. E2BDesktopClick: Desktop GUI click
 func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_desktop_click",
-			Description: t("TOOL_E2B_DESKTOP_CLICK_DESCRIPTION", "Perform mouse click at (x, y) on E2B Cloud Desktop GUI. Set 'keep_alive': true or pass 'sandbox_id' for persistent sessions."),
+			Description: t("TOOL_E2B_DESKTOP_CLICK_DESCRIPTION", "Perform mouse click at (x, y) on E2B Cloud Desktop GUI. Set 'keep_alive': true to persist the desktop sandbox session."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_DESKTOP_CLICK_TITLE", "Click on E2B Desktop"),
 			},
@@ -369,11 +873,15 @@ func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool 
 					},
 					"sandbox_id": {
 						Type:        "string",
-						Description: "Optional existing E2B desktop sandbox ID",
+						Description: "Existing E2B sandbox ID to reuse. Omitting it reuses the most recent active sandbox unless new_sandbox is true.",
 					},
 					"keep_alive": {
 						Type:        "boolean",
-						Description: "Set true to keep the desktop sandbox alive for subsequent actions",
+						Description: "Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished.",
+					},
+					"new_sandbox": {
+						Type:        "boolean",
+						Description: "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
 					},
 					"api_key": {
 						Type:        "string",
@@ -399,60 +907,120 @@ func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool 
 			}
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
+			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
 
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
 			}
 
+			fallbackID := ""
+			if sandboxID == "" && !newSandbox {
+				fallbackID = getLastActiveSandboxID()
+			}
+
 			pyScript := fmt.Sprintf(`
+import json
 from e2b_desktop import Sandbox
 
 sbx_id = %s
+fallback_sbx_id = %s
 keep_alive = %s
-is_persistent = bool(sbx_id) or keep_alive
+new_sandbox = %s
+act = "%s"
+x_coord = %d
+y_coord = %d
 
-if sbx_id:
-    try:
-        sbx = Sandbox.connect(sbx_id)
-    except Exception:
-        sbx = Sandbox.create()
-else:
-    sbx = Sandbox.create()
+reused_existing = False
+sbx = None
 
 try:
-    act = "%s"
-    if act == "right":
-        sbx.right_click(%d, %d)
-    elif act == "double":
-        sbx.double_click(%d, %d)
-    elif act == "middle":
-        sbx.middle_click(%d, %d)
+    if sbx_id:
+        try:
+            sbx = Sandbox.connect(sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create()
+    elif not new_sandbox and fallback_sbx_id:
+        try:
+            sbx = Sandbox.connect(fallback_sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create()
     else:
-        sbx.left_click(%d, %d)
-    print(f"[sandbox_id: {sbx.sandbox_id}]\nSuccessfully executed {act} click at ({%d}, {%d})")
+        sbx = Sandbox.create()
+
+    if act == "right":
+        sbx.right_click(x_coord, y_coord)
+    elif act == "double":
+        sbx.double_click(x_coord, y_coord)
+    elif act == "middle":
+        sbx.middle_click(x_coord, y_coord)
+    else:
+        sbx.left_click(x_coord, y_coord)
+
+    is_persistent = bool(sbx_id) or keep_alive or reused_existing
+    res_payload = {
+        "status": "success",
+        "sandbox_id": sbx.sandbox_id,
+        "reused_existing": reused_existing,
+        "message": f"Executed {act} click at ({x_coord}, {y_coord})",
+        "is_persistent": is_persistent
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
+except Exception as infra_err:
+    clean_msg = str(infra_err).split("\n")[0]
+    res_payload = {
+        "status": "infrastructure_error",
+        "error": clean_msg,
+        "sandbox_id": sbx.sandbox_id if sbx else ""
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
 finally:
-    if not is_persistent:
-        sbx.kill()
-`, escapePyString(sandboxID), pyBool(keepAlive), action, x, y, x, y, x, y, x, y, x, y)
+    if sbx and not (bool(sbx_id) or keep_alive or reused_existing):
+        try:
+            sbx.kill()
+        except Exception:
+            pass
+`, escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox), action, x, y)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
-				return utils.NewToolResultError(fmt.Sprintf("Desktop Click Error: %v", err)), nil, nil
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %v", err)), nil, nil
 			}
 
-			return utils.NewToolResultText(output), nil, nil
+			parsed, parseErr := parseE2BJSONResponse(output)
+			if parseErr != nil || parsed.Status == "infrastructure_error" {
+				errMsg := output
+				if parsed != nil && parsed.Error != "" {
+					errMsg = parsed.Error
+				}
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %s", errMsg)), nil, nil
+			}
+
+			if parsed.IsPersistent {
+				updateLastActiveSandboxID(parsed.SandboxID)
+			} else {
+				clearLastActiveSandboxID(parsed.SandboxID)
+			}
+
+			outText := fmt.Sprintf("[sandbox_id: %s] [reused_existing: %v]\n%s", parsed.SandboxID, parsed.ReusedExisting, parsed.Message)
+			return utils.NewToolResultText(outText), nil, nil
 		},
 	)
 }
 
-// 5. E2BDesktopType: Desktop GUI type (supports persistent sandbox_id / keep_alive)
+// 6. E2BDesktopType: Desktop GUI type
 func E2BDesktopType(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_desktop_type",
-			Description: t("TOOL_E2B_DESKTOP_TYPE_DESCRIPTION", "Type text or press keys on E2B Cloud Desktop GUI. Set 'keep_alive': true or pass 'sandbox_id' for persistent sessions."),
+			Description: t("TOOL_E2B_DESKTOP_TYPE_DESCRIPTION", "Type text or press keys on E2B Cloud Desktop GUI. Set 'keep_alive': true to persist the desktop sandbox session."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_DESKTOP_TYPE_TITLE", "Type on E2B Desktop"),
 			},
@@ -469,11 +1037,15 @@ func E2BDesktopType(t translations.TranslationHelperFunc) inventory.ServerTool {
 					},
 					"sandbox_id": {
 						Type:        "string",
-						Description: "Optional existing E2B desktop sandbox ID",
+						Description: "Existing E2B sandbox ID to reuse. Omitting it reuses the most recent active sandbox unless new_sandbox is true.",
 					},
 					"keep_alive": {
 						Type:        "boolean",
-						Description: "Set true to keep the desktop sandbox alive for subsequent actions",
+						Description: "Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished.",
+					},
+					"new_sandbox": {
+						Type:        "boolean",
+						Description: "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
 					},
 					"api_key": {
 						Type:        "string",
@@ -488,56 +1060,115 @@ func E2BDesktopType(t translations.TranslationHelperFunc) inventory.ServerTool {
 			key, _ := OptionalParam[string](args, "key")
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
+			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
+
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
 			}
 
+			fallbackID := ""
+			if sandboxID == "" && !newSandbox {
+				fallbackID = getLastActiveSandboxID()
+			}
+
 			pyScript := fmt.Sprintf(`
+import json
 from e2b_desktop import Sandbox
 
 text_to_type = %s
 key_to_press = %s
 sbx_id = %s
+fallback_sbx_id = %s
 keep_alive = %s
-is_persistent = bool(sbx_id) or keep_alive
+new_sandbox = %s
 
-if sbx_id:
-    try:
-        sbx = Sandbox.connect(sbx_id)
-    except Exception:
-        sbx = Sandbox.create()
-else:
-    sbx = Sandbox.create()
+reused_existing = False
+sbx = None
 
 try:
+    if sbx_id:
+        try:
+            sbx = Sandbox.connect(sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create()
+    elif not new_sandbox and fallback_sbx_id:
+        try:
+            sbx = Sandbox.connect(fallback_sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create()
+    else:
+        sbx = Sandbox.create()
+
     if text_to_type:
         sbx.write(text_to_type)
     if key_to_press:
         sbx.press(key_to_press)
-    print(f"[sandbox_id: {sbx.sandbox_id}]\nDesktop typing action executed successfully.")
+
+    is_persistent = bool(sbx_id) or keep_alive or reused_existing
+    res_payload = {
+        "status": "success",
+        "sandbox_id": sbx.sandbox_id,
+        "reused_existing": reused_existing,
+        "message": "Desktop typing action executed successfully",
+        "is_persistent": is_persistent
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
+except Exception as infra_err:
+    clean_msg = str(infra_err).split("\n")[0]
+    res_payload = {
+        "status": "infrastructure_error",
+        "error": clean_msg,
+        "sandbox_id": sbx.sandbox_id if sbx else ""
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
 finally:
-    if not is_persistent:
-        sbx.kill()
-`, escapePyString(text), escapePyString(key), escapePyString(sandboxID), pyBool(keepAlive))
+    if sbx and not (bool(sbx_id) or keep_alive or reused_existing):
+        try:
+            sbx.kill()
+        except Exception:
+            pass
+`, escapePyString(text), escapePyString(key), escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox))
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
-				return utils.NewToolResultError(fmt.Sprintf("Desktop Type Error: %v", err)), nil, nil
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %v", err)), nil, nil
 			}
 
-			return utils.NewToolResultText(output), nil, nil
+			parsed, parseErr := parseE2BJSONResponse(output)
+			if parseErr != nil || parsed.Status == "infrastructure_error" {
+				errMsg := output
+				if parsed != nil && parsed.Error != "" {
+					errMsg = parsed.Error
+				}
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %s", errMsg)), nil, nil
+			}
+
+			if parsed.IsPersistent {
+				updateLastActiveSandboxID(parsed.SandboxID)
+			} else {
+				clearLastActiveSandboxID(parsed.SandboxID)
+			}
+
+			outText := fmt.Sprintf("[sandbox_id: %s] [reused_existing: %v]\n%s", parsed.SandboxID, parsed.ReusedExisting, parsed.Message)
+			return utils.NewToolResultText(outText), nil, nil
 		},
 	)
 }
 
-// 6. E2BReadFile: Read file from sandbox
+// 7. E2BReadFile: Read file from sandbox
 func E2BReadFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_read_file",
-			Description: t("TOOL_E2B_READ_FILE_DESCRIPTION", "Read file contents from sandbox. Set 'keep_alive': true or pass 'sandbox_id' for persistent sessions."),
+			Description: t("TOOL_E2B_READ_FILE_DESCRIPTION", "Read file contents from sandbox. Set 'keep_alive': true to persist the sandbox session."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_READ_FILE_TITLE", "Read File from E2B Sandbox"),
 			},
@@ -550,11 +1181,15 @@ func E2BReadFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 					},
 					"sandbox_id": {
 						Type:        "string",
-						Description: "Optional existing E2B sandbox ID",
+						Description: "Existing E2B sandbox ID to reuse. Omitting it reuses the most recent active sandbox unless new_sandbox is true.",
 					},
 					"keep_alive": {
 						Type:        "boolean",
-						Description: "Set true to keep the sandbox alive",
+						Description: "Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished.",
+					},
+					"new_sandbox": {
+						Type:        "boolean",
+						Description: "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
 					},
 					"api_key": {
 						Type:        "string",
@@ -572,52 +1207,110 @@ func E2BReadFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 			}
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
+			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
+
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
 			}
 
+			fallbackID := ""
+			if sandboxID == "" && !newSandbox {
+				fallbackID = getLastActiveSandboxID()
+			}
+
 			pyScript := fmt.Sprintf(`
+import json
 from e2b import Sandbox
 
 path = %s
 sbx_id = %s
+fallback_sbx_id = %s
 keep_alive = %s
-is_persistent = bool(sbx_id) or keep_alive
+new_sandbox = %s
 
-if sbx_id:
-    try:
-        sbx = Sandbox.connect(sbx_id)
-    except Exception:
-        sbx = Sandbox.create()
-else:
-    sbx = Sandbox.create()
+reused_existing = False
+sbx = None
 
 try:
+    if sbx_id:
+        try:
+            sbx = Sandbox.connect(sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create()
+    elif not new_sandbox and fallback_sbx_id:
+        try:
+            sbx = Sandbox.connect(fallback_sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create()
+    else:
+        sbx = Sandbox.create()
+
     content = sbx.files.read(path)
-    print(f"[sandbox_id: {sbx.sandbox_id}]\n" + str(content))
+    is_persistent = bool(sbx_id) or keep_alive or reused_existing
+    res_payload = {
+        "status": "success",
+        "sandbox_id": sbx.sandbox_id,
+        "reused_existing": reused_existing,
+        "stdout": str(content),
+        "is_persistent": is_persistent
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
+except Exception as infra_err:
+    clean_msg = str(infra_err).split("\n")[0]
+    res_payload = {
+        "status": "infrastructure_error",
+        "error": clean_msg,
+        "sandbox_id": sbx.sandbox_id if sbx else ""
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
 finally:
-    if not is_persistent:
-        sbx.kill()
-`, escapePyString(path), escapePyString(sandboxID), pyBool(keepAlive))
+    if sbx and not (bool(sbx_id) or keep_alive or reused_existing):
+        try:
+            sbx.kill()
+        except Exception:
+            pass
+`, escapePyString(path), escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox))
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
-				return utils.NewToolResultError(fmt.Sprintf("E2B Read File Error: %v", err)), nil, nil
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %v", err)), nil, nil
 			}
 
-			return utils.NewToolResultText(output), nil, nil
+			parsed, parseErr := parseE2BJSONResponse(output)
+			if parseErr != nil || parsed.Status == "infrastructure_error" {
+				errMsg := output
+				if parsed != nil && parsed.Error != "" {
+					errMsg = parsed.Error
+				}
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %s", errMsg)), nil, nil
+			}
+
+			if parsed.IsPersistent {
+				updateLastActiveSandboxID(parsed.SandboxID)
+			} else {
+				clearLastActiveSandboxID(parsed.SandboxID)
+			}
+
+			outText := fmt.Sprintf("[sandbox_id: %s] [reused_existing: %v]\n%s", parsed.SandboxID, parsed.ReusedExisting, parsed.Stdout)
+			return utils.NewToolResultText(outText), nil, nil
 		},
 	)
 }
 
-// 7. E2BWriteFile: Write file to sandbox
+// 8. E2BWriteFile: Write file to sandbox
 func E2BWriteFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_write_file",
-			Description: t("TOOL_E2B_WRITE_FILE_DESCRIPTION", "Write text content to a file in sandbox. Set 'keep_alive': true or pass 'sandbox_id' for persistent sessions."),
+			Description: t("TOOL_E2B_WRITE_FILE_DESCRIPTION", "Write text content to a file in sandbox. Set 'keep_alive': true to persist the sandbox session."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_WRITE_FILE_TITLE", "Write File in E2B Sandbox"),
 			},
@@ -634,11 +1327,15 @@ func E2BWriteFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 					},
 					"sandbox_id": {
 						Type:        "string",
-						Description: "Optional existing E2B sandbox ID",
+						Description: "Existing E2B sandbox ID to reuse. Omitting it reuses the most recent active sandbox unless new_sandbox is true.",
 					},
 					"keep_alive": {
 						Type:        "boolean",
-						Description: "Set true to keep the sandbox alive",
+						Description: "Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished.",
+					},
+					"new_sandbox": {
+						Type:        "boolean",
+						Description: "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
 					},
 					"api_key": {
 						Type:        "string",
@@ -660,53 +1357,111 @@ func E2BWriteFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 			}
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
+			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
+
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
 			}
 
+			fallbackID := ""
+			if sandboxID == "" && !newSandbox {
+				fallbackID = getLastActiveSandboxID()
+			}
+
 			pyScript := fmt.Sprintf(`
+import json
 from e2b import Sandbox
 
 path = %s
 content = %s
 sbx_id = %s
+fallback_sbx_id = %s
 keep_alive = %s
-is_persistent = bool(sbx_id) or keep_alive
+new_sandbox = %s
 
-if sbx_id:
-    try:
-        sbx = Sandbox.connect(sbx_id)
-    except Exception:
-        sbx = Sandbox.create()
-else:
-    sbx = Sandbox.create()
+reused_existing = False
+sbx = None
 
 try:
+    if sbx_id:
+        try:
+            sbx = Sandbox.connect(sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create()
+    elif not new_sandbox and fallback_sbx_id:
+        try:
+            sbx = Sandbox.connect(fallback_sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create()
+    else:
+        sbx = Sandbox.create()
+
     sbx.files.write(path, content)
-    print(f"[sandbox_id: {sbx.sandbox_id}]\nFile successfully written to {path}")
+    is_persistent = bool(sbx_id) or keep_alive or reused_existing
+    res_payload = {
+        "status": "success",
+        "sandbox_id": sbx.sandbox_id,
+        "reused_existing": reused_existing,
+        "message": f"File successfully written to {path}",
+        "is_persistent": is_persistent
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
+except Exception as infra_err:
+    clean_msg = str(infra_err).split("\n")[0]
+    res_payload = {
+        "status": "infrastructure_error",
+        "error": clean_msg,
+        "sandbox_id": sbx.sandbox_id if sbx else ""
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
 finally:
-    if not is_persistent:
-        sbx.kill()
-`, escapePyString(path), escapePyString(content), escapePyString(sandboxID), pyBool(keepAlive))
+    if sbx and not (bool(sbx_id) or keep_alive or reused_existing):
+        try:
+            sbx.kill()
+        except Exception:
+            pass
+`, escapePyString(path), escapePyString(content), escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox))
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
-				return utils.NewToolResultError(fmt.Sprintf("E2B Write File Error: %v", err)), nil, nil
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %v", err)), nil, nil
 			}
 
-			return utils.NewToolResultText(output), nil, nil
+			parsed, parseErr := parseE2BJSONResponse(output)
+			if parseErr != nil || parsed.Status == "infrastructure_error" {
+				errMsg := output
+				if parsed != nil && parsed.Error != "" {
+					errMsg = parsed.Error
+				}
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %s", errMsg)), nil, nil
+			}
+
+			if parsed.IsPersistent {
+				updateLastActiveSandboxID(parsed.SandboxID)
+			} else {
+				clearLastActiveSandboxID(parsed.SandboxID)
+			}
+
+			outText := fmt.Sprintf("[sandbox_id: %s] [reused_existing: %v]\n%s", parsed.SandboxID, parsed.ReusedExisting, parsed.Message)
+			return utils.NewToolResultText(outText), nil, nil
 		},
 	)
 }
 
-// 8. E2BListDir: List directory structure in sandbox
+// 9. E2BListDir: List directory structure in sandbox
 func E2BListDir(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_list_dir",
-			Description: t("TOOL_E2B_LIST_DIR_DESCRIPTION", "List files and directory contents inside sandbox. Set 'keep_alive': true or pass 'sandbox_id' for persistent sessions."),
+			Description: t("TOOL_E2B_LIST_DIR_DESCRIPTION", "List files and directory contents inside sandbox. Set 'keep_alive': true to persist the sandbox session."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_LIST_DIR_TITLE", "List Directory in E2B Sandbox"),
 			},
@@ -719,11 +1474,15 @@ func E2BListDir(t translations.TranslationHelperFunc) inventory.ServerTool {
 					},
 					"sandbox_id": {
 						Type:        "string",
-						Description: "Optional existing E2B sandbox ID",
+						Description: "Existing E2B sandbox ID to reuse. Omitting it reuses the most recent active sandbox unless new_sandbox is true.",
 					},
 					"keep_alive": {
 						Type:        "boolean",
-						Description: "Set true to keep the sandbox alive",
+						Description: "Keeps the sandbox running after this command instead of auto-destroying it. The sandbox bills for wall-clock uptime while alive. You must call e2b_kill_sandbox when finished.",
+					},
+					"new_sandbox": {
+						Type:        "boolean",
+						Description: "Set true to explicitly force creation of a new billed sandbox VM instead of reusing an existing active sandbox.",
 					},
 					"api_key": {
 						Type:        "string",
@@ -740,53 +1499,111 @@ func E2BListDir(t translations.TranslationHelperFunc) inventory.ServerTool {
 			}
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
 			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
+			newSandbox, _ := OptionalParam[bool](args, "new_sandbox")
+
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
 			}
 
+			fallbackID := ""
+			if sandboxID == "" && !newSandbox {
+				fallbackID = getLastActiveSandboxID()
+			}
+
 			pyScript := fmt.Sprintf(`
+import json
 from e2b import Sandbox
 
 path = %s
 sbx_id = %s
+fallback_sbx_id = %s
 keep_alive = %s
-is_persistent = bool(sbx_id) or keep_alive
+new_sandbox = %s
 
-if sbx_id:
-    try:
-        sbx = Sandbox.connect(sbx_id)
-    except Exception:
-        sbx = Sandbox.create()
-else:
-    sbx = Sandbox.create()
+reused_existing = False
+sbx = None
 
 try:
+    if sbx_id:
+        try:
+            sbx = Sandbox.connect(sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create()
+    elif not new_sandbox and fallback_sbx_id:
+        try:
+            sbx = Sandbox.connect(fallback_sbx_id)
+            reused_existing = True
+        except Exception:
+            sbx = Sandbox.create()
+    else:
+        sbx = Sandbox.create()
+
     files = sbx.files.list(path)
     res = [f"{f.name} ({'dir' if f.is_dir else 'file'})" for f in files]
-    print(f"[sandbox_id: {sbx.sandbox_id}]\n" + "\n".join(res))
+    is_persistent = bool(sbx_id) or keep_alive or reused_existing
+    res_payload = {
+        "status": "success",
+        "sandbox_id": sbx.sandbox_id,
+        "reused_existing": reused_existing,
+        "stdout": "\n".join(res),
+        "is_persistent": is_persistent
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
+except Exception as infra_err:
+    clean_msg = str(infra_err).split("\n")[0]
+    res_payload = {
+        "status": "infrastructure_error",
+        "error": clean_msg,
+        "sandbox_id": sbx.sandbox_id if sbx else ""
+    }
+    print("---E2B_JSON_START---")
+    print(json.dumps(res_payload))
+    print("---E2B_JSON_END---")
 finally:
-    if not is_persistent:
-        sbx.kill()
-`, escapePyString(path), escapePyString(sandboxID), pyBool(keepAlive))
+    if sbx and not (bool(sbx_id) or keep_alive or reused_existing):
+        try:
+            sbx.kill()
+        except Exception:
+            pass
+`, escapePyString(path), escapePyString(sandboxID), escapePyString(fallbackID), pyBool(keepAlive), pyBool(newSandbox))
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
-				return utils.NewToolResultError(fmt.Sprintf("E2B List Dir Error: %v", err)), nil, nil
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %v", err)), nil, nil
 			}
 
-			return utils.NewToolResultText(output), nil, nil
+			parsed, parseErr := parseE2BJSONResponse(output)
+			if parseErr != nil || parsed.Status == "infrastructure_error" {
+				errMsg := output
+				if parsed != nil && parsed.Error != "" {
+					errMsg = parsed.Error
+				}
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %s", errMsg)), nil, nil
+			}
+
+			if parsed.IsPersistent {
+				updateLastActiveSandboxID(parsed.SandboxID)
+			} else {
+				clearLastActiveSandboxID(parsed.SandboxID)
+			}
+
+			outText := fmt.Sprintf("[sandbox_id: %s] [reused_existing: %v]\n%s", parsed.SandboxID, parsed.ReusedExisting, parsed.Stdout)
+			return utils.NewToolResultText(outText), nil, nil
 		},
 	)
 }
 
-// 9. E2BKillSandbox: Explicitly kill a persistent sandbox session when done
+// 10. E2BKillSandbox: Explicitly kill a persistent sandbox session when done
 func E2BKillSandbox(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_kill_sandbox",
-			Description: t("TOOL_E2B_KILL_SANDBOX_DESCRIPTION", "Explicitly terminate and destroy an active persistent E2B cloud sandbox VM by its sandbox_id."),
+			Description: t("TOOL_E2B_KILL_SANDBOX_DESCRIPTION", "Explicitly terminate and destroy an active persistent E2B cloud sandbox VM by its sandbox_id. Lifecycle state machine: running -> paused -> destroyed. Returns success if target sandbox is already paused or destroyed."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_KILL_SANDBOX_TITLE", "Kill E2B Sandbox"),
 			},
@@ -816,24 +1633,43 @@ func E2BKillSandbox(t translations.TranslationHelperFunc) inventory.ServerTool {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
 			}
 
+			clearLastActiveSandboxID(sandboxID)
+
 			pyScript := fmt.Sprintf(`
+import json
 from e2b import Sandbox
 
 sbx_id = %s
 try:
     sbx = Sandbox.connect(sbx_id)
     sbx.kill()
-    print(f"Sandbox {sbx_id} successfully terminated and destroyed.")
+    res_payload = {
+        "status": "success",
+        "sandbox_id": sbx_id,
+        "message": f"Sandbox {sbx_id} successfully terminated and destroyed."
+    }
 except Exception as e:
-    print(f"Sandbox {sbx_id} already killed or not found: {e}")
+    res_payload = {
+        "status": "success",
+        "sandbox_id": sbx_id,
+        "message": f"Sandbox {sbx_id} is already paused, terminated, or not found."
+    }
+print("---E2B_JSON_START---")
+print(json.dumps(res_payload))
+print("---E2B_JSON_END---")
 `, escapePyString(sandboxID))
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
-				return utils.NewToolResultError(fmt.Sprintf("E2B Kill Sandbox Error: %v", err)), nil, nil
+				return utils.NewToolResultError(fmt.Sprintf("E2B Infrastructure Error: %v", err)), nil, nil
 			}
 
-			return utils.NewToolResultText(output), nil, nil
+			parsed, parseErr := parseE2BJSONResponse(output)
+			if parseErr != nil {
+				return utils.NewToolResultText(fmt.Sprintf("Sandbox %s is terminated or not found.", sandboxID)), nil, nil
+			}
+
+			return utils.NewToolResultText(parsed.Message), nil, nil
 		},
 	)
 }

@@ -328,6 +328,7 @@ func AllTools(t translations.TranslationHelperFunc) []inventory.ServerTool {
 		// E2B Sandbox & Desktop GUI tools
 		E2BRunCode(t),
 		E2BRunCommand(t),
+		E2BListSandboxes(t),
 		E2BReadFile(t),
 		E2BWriteFile(t),
 		E2BListDir(t),
