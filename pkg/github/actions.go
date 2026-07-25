@@ -46,6 +46,34 @@ const (
 	actionsMethodDeleteWorkflowRunLogs    = "delete_workflow_run_logs"
 )
 
+// coerceResourceID reads resource_id, accepting either a string or a JSON
+// number. Run, job and artifact IDs are numeric everywhere else in the API, so
+// rejecting an integer for not being a string is friction with no upside.
+// Returns an empty string when the parameter is absent.
+func coerceResourceID(args map[string]any) (string, error) {
+	raw, ok := args["resource_id"]
+	if !ok || raw == nil {
+		return "", nil
+	}
+	switch v := raw.(type) {
+	case string:
+		return v, nil
+	case float64:
+		if v != float64(int64(v)) {
+			return "", fmt.Errorf("parameter resource_id must be a string or a whole number, got %v", v)
+		}
+		return strconv.FormatInt(int64(v), 10), nil
+	case int64:
+		return strconv.FormatInt(v, 10), nil
+	case int:
+		return strconv.Itoa(v), nil
+	case json.Number:
+		return v.String(), nil
+	default:
+		return "", fmt.Errorf("parameter resource_id must be a string or a whole number")
+	}
+}
+
 // handleFailedJobLogs gets logs for all failed jobs in a workflow run
 func handleFailedJobLogs(ctx context.Context, client *github.Client, owner, repo string, runID int64, returnContent bool, tailLines int, contentWindowSize int) (*mcp.CallToolResult, any, error) {
 	// First, get all jobs for the workflow run
@@ -165,6 +193,45 @@ func getJobLogData(ctx context.Context, client *github.Client, owner, repo strin
 	return result, resp, nil
 }
 
+// errorMarker identifies GitHub Actions error annotations in raw job logs.
+const errorMarker = "##[error]"
+
+// errorTrailingLines is how many lines after the last error annotation are
+// kept, enough for a summary line without spilling into the cleanup section.
+const errorTrailingLines = 5
+
+// errorScanLines is how far back to buffer when looking for an error
+// annotation, independent of how many lines the caller asked to see.
+const errorScanLines = 2000
+
+// selectLogWindow picks the most useful window of at most limit lines.
+//
+// A GitHub Actions job log always ends with the post-job cleanup section:
+// unsetting git config, removing credential files, cleaning up orphan
+// processes. Returning the literal tail therefore spends the whole budget on
+// boilerplate and hides the failure the caller is looking for. When the log
+// contains an error annotation, end the window just after the last one
+// instead. With no annotation present, fall back to the tail.
+func selectLogWindow(lines []string, limit int) []string {
+	if limit <= 0 || len(lines) <= limit {
+		return lines
+	}
+
+	last := -1
+	for i, line := range lines {
+		if strings.Contains(line, errorMarker) {
+			last = i
+		}
+	}
+	if last < 0 {
+		return lines[len(lines)-limit:]
+	}
+
+	end := min(last+1+errorTrailingLines, len(lines))
+	start := max(end-limit, 0)
+	return lines[start:end]
+}
+
 func downloadLogContent(ctx context.Context, logURL string, tailLines int, maxLines int) (string, int, *http.Response, error) {
 	prof := profiler.New(nil, profiler.IsProfilingEnabled())
 	finish := prof.Start(ctx, "log_buffer_processing")
@@ -179,17 +246,17 @@ func downloadLogContent(ctx context.Context, logURL string, tailLines int, maxLi
 		return "", 0, httpResp, fmt.Errorf("failed to download logs: HTTP %d", httpResp.StatusCode)
 	}
 
-	bufferSize := min(tailLines, maxLines)
+	// Buffer well beyond what the caller asked for, so that an error
+	// annotation sitting above the cleanup section is still present when the
+	// window is chosen. The content window keeps the upper bound fixed.
+	bufferSize := min(max(tailLines, errorScanLines), maxLines)
 
 	processedInput, totalLines, httpResp, err := buffer.ProcessResponseAsRingBufferToEnd(httpResp, bufferSize)
 	if err != nil {
 		return "", 0, httpResp, fmt.Errorf("failed to process log content: %w", err)
 	}
 
-	lines := strings.Split(processedInput, "\n")
-	if len(lines) > tailLines {
-		lines = lines[len(lines)-tailLines:]
-	}
+	lines := selectLogWindow(strings.Split(processedInput, "\n"), tailLines)
 	finalResult := strings.Join(lines, "\n")
 
 	_ = finish(len(lines), int64(len(finalResult)))
@@ -340,7 +407,7 @@ Use this tool to list workflows in a repository, or list workflow runs, jobs, an
 				return utils.NewToolResultError(err.Error()), nil, nil
 			}
 
-			resourceID, err := OptionalParam[string](args, "resource_id")
+			resourceID, err := coerceResourceID(args)
 			if err != nil {
 				return utils.NewToolResultError(err.Error()), nil, nil
 			}
@@ -468,9 +535,12 @@ Use this tool to get details about individual workflows, workflow runs, jobs, an
 				return utils.NewToolResultError(err.Error()), nil, nil
 			}
 
-			resourceID, err := RequiredParam[string](args, "resource_id")
+			resourceID, err := coerceResourceID(args)
 			if err != nil {
 				return utils.NewToolResultError(err.Error()), nil, nil
+			}
+			if resourceID == "" {
+				return utils.NewToolResultError("missing required parameter: resource_id"), nil, nil
 			}
 
 			client, err := deps.GetClient(ctx)
