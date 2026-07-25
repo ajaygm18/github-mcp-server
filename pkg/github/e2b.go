@@ -32,6 +32,13 @@ func getE2BAPIKey(args map[string]any) string {
 	return os.Getenv("E2B_API_KEY")
 }
 
+func pyBool(b bool) string {
+	if b {
+		return "True"
+	}
+	return "False"
+}
+
 func runE2BPythonScript(apiKey, pyCode string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -106,7 +113,7 @@ from e2b_code_interpreter import Sandbox
 
 code_to_run = %s
 sbx_id = %s
-keep_alive = %t
+keep_alive = %s
 
 is_persistent = bool(sbx_id) or keep_alive
 if sbx_id:
@@ -131,7 +138,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(code), escapePyString(sandboxID), keepAlive)
+`, escapePyString(code), escapePyString(sandboxID), pyBool(keepAlive))
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -194,7 +201,7 @@ from e2b import Sandbox
 
 cmd_to_run = %s
 sbx_id = %s
-keep_alive = %t
+keep_alive = %s
 
 is_persistent = bool(sbx_id) or keep_alive
 if sbx_id:
@@ -214,7 +221,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(command), escapePyString(sandboxID), keepAlive)
+`, escapePyString(command), escapePyString(sandboxID), pyBool(keepAlive))
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -268,7 +275,7 @@ import base64
 from e2b_desktop import Sandbox
 
 sbx_id = %s
-keep_alive = %t
+keep_alive = %s
 is_persistent = bool(sbx_id) or keep_alive
 
 if sbx_id:
@@ -288,7 +295,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(sandboxID), keepAlive)
+`, escapePyString(sandboxID), pyBool(keepAlive))
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -367,7 +374,7 @@ func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool 
 from e2b_desktop import Sandbox
 
 sbx_id = %s
-keep_alive = %t
+keep_alive = %s
 is_persistent = bool(sbx_id) or keep_alive
 
 if sbx_id:
@@ -392,7 +399,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(sandboxID), keepAlive, action, x, y, x, y, x, y, x, y, x, y)
+`, escapePyString(sandboxID), pyBool(keepAlive), action, x, y, x, y, x, y, x, y, x, y)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -457,7 +464,7 @@ from e2b_desktop import Sandbox
 text_to_type = %s
 key_to_press = %s
 sbx_id = %s
-keep_alive = %t
+keep_alive = %s
 is_persistent = bool(sbx_id) or keep_alive
 
 if sbx_id:
@@ -477,7 +484,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(text), escapePyString(key), escapePyString(sandboxID), keepAlive)
+`, escapePyString(text), escapePyString(key), escapePyString(sandboxID), pyBool(keepAlive))
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -540,7 +547,7 @@ from e2b import Sandbox
 
 path = %s
 sbx_id = %s
-keep_alive = %t
+keep_alive = %s
 is_persistent = bool(sbx_id) or keep_alive
 
 if sbx_id:
@@ -557,7 +564,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(path), escapePyString(sandboxID), keepAlive)
+`, escapePyString(path), escapePyString(sandboxID), pyBool(keepAlive))
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -629,7 +636,7 @@ from e2b import Sandbox
 path = %s
 content = %s
 sbx_id = %s
-keep_alive = %t
+keep_alive = %s
 is_persistent = bool(sbx_id) or keep_alive
 
 if sbx_id:
@@ -646,7 +653,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(path), escapePyString(content), escapePyString(sandboxID), keepAlive)
+`, escapePyString(path), escapePyString(content), escapePyString(sandboxID), pyBool(keepAlive))
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -708,7 +715,7 @@ from e2b import Sandbox
 
 path = %s
 sbx_id = %s
-keep_alive = %t
+keep_alive = %s
 is_persistent = bool(sbx_id) or keep_alive
 
 if sbx_id:
@@ -726,7 +733,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(path), escapePyString(sandboxID), keepAlive)
+`, escapePyString(path), escapePyString(sandboxID), pyBool(keepAlive))
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
