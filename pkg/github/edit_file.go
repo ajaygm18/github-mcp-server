@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	ghErrors "github.com/github/github-mcp-server/pkg/errors"
@@ -21,6 +22,10 @@ const maxPreviewRunes = 80
 
 // maxDiffLines bounds how many lines of each side of the diff are rendered.
 const maxDiffLines = 40
+
+// maxWriteRetries bounds how many times a commit is retried after the branch
+// moves between the read and the write.
+const maxWriteRetries = 1
 
 // fileEdit is a single string replacement to apply to a file.
 type fileEdit struct {
@@ -220,22 +225,62 @@ func EditFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 			}
 
 			if !dryRun {
-				opts := &github.RepositoryContentFileOptions{
-					Message: github.Ptr(message),
-					Content: []byte(after),
-					Branch:  github.Ptr(branch),
-					SHA:     github.Ptr(fileContent.GetSHA()),
-				}
-				committed, writeResp, err := client.Repositories.UpdateFile(ctx, owner, repo, path, opts)
-				if err != nil {
-					return ghErrors.NewGitHubAPIErrorResponse(ctx, "failed to commit edited file", writeResp, err), nil, nil
-				}
-				if writeResp != nil && writeResp.Body != nil {
-					defer func() { _ = writeResp.Body.Close() }()
-				}
-				if committed != nil && committed.Commit.SHA != nil {
-					response.CommitSHA = committed.Commit.GetSHA()
-					response.CommitURL = committed.Commit.GetHTMLURL()
+				for attempt := 0; ; attempt++ {
+					opts := &github.RepositoryContentFileOptions{
+						Message: github.Ptr(message),
+						Content: []byte(after),
+						Branch:  github.Ptr(branch),
+						SHA:     github.Ptr(fileContent.GetSHA()),
+					}
+					committed, writeResp, writeErr := client.Repositories.UpdateFile(ctx, owner, repo, path, opts)
+					if writeResp != nil && writeResp.Body != nil {
+						_ = writeResp.Body.Close()
+					}
+					if writeErr == nil {
+						if committed != nil && committed.Commit.SHA != nil {
+							response.CommitSHA = committed.Commit.GetSHA()
+							response.CommitURL = committed.Commit.GetHTMLURL()
+						}
+						break
+					}
+
+					// A 409 means the branch moved between the read and the
+					// write. Another commit landed first, which happens
+					// routinely when two edits run against the same branch.
+					// Re-read at the new head, re-apply, and try once more.
+					conflict := writeResp != nil && writeResp.StatusCode == http.StatusConflict
+					if !conflict || attempt >= maxWriteRetries {
+						return ghErrors.NewGitHubAPIErrorResponse(ctx, "failed to commit edited file", writeResp, writeErr), nil, nil
+					}
+
+					latest, _, rereadResp, rereadErr := client.Repositories.GetContents(ctx, owner, repo, path, &github.RepositoryContentGetOptions{Ref: branch})
+					if rereadResp != nil && rereadResp.Body != nil {
+						_ = rereadResp.Body.Close()
+					}
+					if rereadErr != nil {
+						return ghErrors.NewGitHubAPIErrorResponse(ctx, "failed to re-read file after write conflict", rereadResp, rereadErr), nil, nil
+					}
+					if latest == nil {
+						return utils.NewToolResultError(fmt.Sprintf("path %q is a directory, not a file", path)), nil, nil
+					}
+
+					before, err = latest.GetContent()
+					if err != nil {
+						return utils.NewToolResultError(fmt.Sprintf("failed to decode file contents: %s. The file may be binary, which edit_file does not support", err.Error())), nil, nil
+					}
+					after, applied, err = applyFileEdits(before, edits)
+					if err != nil {
+						return utils.NewToolResultError(fmt.Sprintf("%s (the branch moved during the edit, so the file was re-read at the new head)", err.Error())), nil, nil
+					}
+					if after == before {
+						return utils.NewToolResultError("edits produced no change to the file; nothing to commit"), nil, nil
+					}
+
+					fileContent = latest
+					response.BytesBefore = len(before)
+					response.BytesAfter = len(after)
+					response.Edits = applied
+					response.Diff = renderDiff(before, after)
 				}
 			}
 
