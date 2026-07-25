@@ -32,7 +32,6 @@ func getE2BAPIKey(args map[string]any) string {
 	return os.Getenv("E2B_API_KEY")
 }
 
-// Executes a Python script against official E2B SDK
 func runE2BPythonScript(apiKey, pyCode string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -56,13 +55,13 @@ func runE2BPythonScript(apiKey, pyCode string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-// 1. E2BRunCode: Code Interpreter execution using e2b_code_interpreter Sandbox
+// 1. E2BRunCode: Code Interpreter execution using e2b_code_interpreter
 func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_run_code",
-			Description: t("TOOL_E2B_RUN_CODE_DESCRIPTION", "Run Python or Shell code inside official E2B Code Interpreter cloud sandbox and return execution results."),
+			Description: t("TOOL_E2B_RUN_CODE_DESCRIPTION", "Run Python code inside official E2B Code Interpreter cloud sandbox and return execution results."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_RUN_CODE_TITLE", "Run Code in E2B Sandbox"),
 			},
@@ -71,7 +70,7 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 				Properties: map[string]*jsonschema.Schema{
 					"code": {
 						Type:        "string",
-						Description: "The Python or Shell code to execute in the E2B sandbox",
+						Description: "The Python code to execute in the E2B sandbox",
 					},
 					"api_key": {
 						Type:        "string",
@@ -94,16 +93,17 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 			}
 
 			pyScript := fmt.Sprintf(`
-import json
-from e2b import Sandbox
+from e2b_code_interpreter import Sandbox
 
 code_to_run = %s
 sbx = Sandbox.create()
 try:
-    res = sbx.commands.run(code_to_run)
-    out = res.stdout
-    if res.stderr:
-        out += "\nSTDERR:\n" + res.stderr
+    execution = sbx.run_code(code_to_run)
+    stdout_text = "".join(execution.logs.stdout)
+    stderr_text = "".join(execution.logs.stderr)
+    out = stdout_text
+    if stderr_text:
+        out += "\nSTDERR:\n" + stderr_text
     print(out)
 finally:
     sbx.kill()
@@ -119,7 +119,7 @@ finally:
 	)
 }
 
-// 2. E2BRunCommand: Terminal execution using e2b Sandbox
+// 2. E2BRunCommand: Terminal command execution
 func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
@@ -157,7 +157,6 @@ func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 			}
 
 			pyScript := fmt.Sprintf(`
-import json
 from e2b import Sandbox
 
 cmd_to_run = %s
