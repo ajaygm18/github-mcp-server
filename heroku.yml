@@ -1,0 +1,11 @@
+build:
+  docker:
+    web: Dockerfile.heroku
+
+run:
+  # Given as a string so Heroku runs it through a shell and $PORT expands.
+  # --toolsets=default,actions is the whole point of self-hosting: the actions
+  # toolset is not enabled on GitHub's hosted endpoint.
+  # --trust-proxy-headers is correct here because the Heroku router terminates
+  # TLS and sets X-Forwarded-Proto.
+  web: /server/github-mcp-server http --port $PORT --toolsets=default,actions --trust-proxy-headers

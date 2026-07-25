@@ -1,0 +1,35 @@
+# Heroku container build.
+#
+# Differences from the upstream Dockerfile, all deliberate:
+#   - No Node/UI stage. The repo ships a committed pkg/github/ui_dist placeholder,
+#     so the Go build succeeds without npm. Dropping the stage removes the
+#     largest and most fragile part of the build.
+#   - No BuildKit secret mounts. Heroku's container builder does not supply them,
+#     and they only bake in OAuth client credentials this deployment never uses.
+#   - Alpine rather than distroless, because the run command needs a shell to
+#     expand Heroku's $PORT.
+
+FROM golang:1.25.12-alpine AS build
+
+WORKDIR /build
+
+RUN apk add --no-cache git
+
+COPY . .
+
+RUN CGO_ENABLED=0 go build \
+    -ldflags="-s -w -X main.version=hermes-heroku" \
+    -o /bin/github-mcp-server \
+    ./cmd/github-mcp-server
+
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates
+
+WORKDIR /server
+
+COPY --from=build /bin/github-mcp-server .
+
+# Heroku assigns $PORT at runtime and overrides this via heroku.yml, but keeping
+# a working default makes the image runnable locally with the same command.
+CMD ["sh", "-c", "exec /server/github-mcp-server http --port ${PORT:-8082} --toolsets=default,actions --trust-proxy-headers"]

@@ -125,6 +125,14 @@ func RunHTTPServer(cfg ServerConfig) error {
 	logger := slog.New(slogHandler)
 	logger.Info("starting server", "version", cfg.Version, "host", cfg.Host, "lockdownEnabled", cfg.LockdownMode, "readOnly", cfg.ReadOnly, "insidersMode", cfg.InsidersMode)
 
+	// Optional single-tenant gateway. Disabled unless explicitly configured, in
+	// which case an unsafe configuration fails startup rather than exposing an
+	// unauthenticated endpoint. See gateway.go.
+	gateway, err := newStaticTokenGateway(logger)
+	if err != nil {
+		return fmt.Errorf("failed to configure static token gateway: %w", err)
+	}
+
 	apiHost, err := utils.NewAPIHost(cfg.Host)
 	if err != nil {
 		return fmt.Errorf("failed to parse API host: %w", err)
@@ -183,6 +191,12 @@ func RunHTTPServer(cfg ServerConfig) error {
 
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.SetCorsHeaders)
+
+		// Runs before ExtractUserToken so the injected credential is the one the
+		// downstream middleware chain sees.
+		if gateway != nil {
+			r.Use(gateway)
+		}
 
 		// Register Middleware First, needs to be before route registration
 		handler.RegisterMiddleware(r)
