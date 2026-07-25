@@ -24,7 +24,7 @@ RUN CGO_ENABLED=0 go build \
 
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates python3 py3-pip && pip install --no-cache-dir --break-system-packages e2b e2b-code-interpreter e2b-desktop
 
 WORKDIR /server
 
