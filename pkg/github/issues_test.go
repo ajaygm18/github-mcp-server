@@ -5170,15 +5170,15 @@ func Test_ListIssueTypes(t *testing.T) {
 			expectedIssueTypes: mockIssueTypes,
 		},
 		{
-			name: "organization not found",
+			name: "organization not found returns empty list",
 			mockedClient: MockHTTPClientWithHandlers(map[string]http.HandlerFunc{
 				"GET /orgs/nonexistent/issue-types": mockResponse(t, http.StatusNotFound, `{"message": "Organization not found"}`),
 			}),
 			requestArgs: map[string]any{
 				"owner": "nonexistent",
 			},
-			expectError:    true,
-			expectedErrMsg: "failed to list issue types",
+			expectError:        false,
+			expectedIssueTypes: []*github.IssueType{},
 		},
 		{
 			name: "missing owner parameter",
@@ -5202,7 +5202,7 @@ func Test_ListIssueTypes(t *testing.T) {
 			expectedIssueTypes: mockIssueTypes,
 		},
 		{
-			name: "repo not found",
+			name: "repo not found returns empty list",
 			mockedClient: MockHTTPClientWithHandlers(map[string]http.HandlerFunc{
 				"GET /repos/testorg/nonexistent/issue-types": mockResponse(t, http.StatusNotFound, `{"message": "Not Found"}`),
 			}),
@@ -5210,8 +5210,8 @@ func Test_ListIssueTypes(t *testing.T) {
 				"owner": "testorg",
 				"repo":  "nonexistent",
 			},
-			expectError:    true,
-			expectedErrMsg: "failed to list issue types",
+			expectError:        false,
+			expectedIssueTypes: []*github.IssueType{},
 		},
 	}
 
