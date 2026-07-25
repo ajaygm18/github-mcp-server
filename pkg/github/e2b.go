@@ -61,7 +61,7 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_run_code",
-			Description: t("TOOL_E2B_RUN_CODE_DESCRIPTION", "Run Python code inside official E2B Code Interpreter cloud sandbox. Pass optional 'sandbox_id' to run in an existing persistent sandbox session."),
+			Description: t("TOOL_E2B_RUN_CODE_DESCRIPTION", "Run Python code inside official E2B Code Interpreter cloud sandbox. Pass optional 'sandbox_id' to re-use an existing persistent sandbox session."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_RUN_CODE_TITLE", "Run Code in E2B Sandbox"),
 			},
@@ -102,6 +102,7 @@ from e2b_code_interpreter import Sandbox
 code_to_run = %s
 sbx_id = %s
 
+is_persistent = bool(sbx_id)
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -122,7 +123,7 @@ try:
     
     print(f"[sandbox_id: {sbx.sandbox_id}]\n" + out)
 finally:
-    if not sbx_id:
+    if not is_persistent:
         sbx.kill()
 `, escapePyString(code), escapePyString(sandboxID))
 
@@ -183,6 +184,7 @@ from e2b import Sandbox
 cmd_to_run = %s
 sbx_id = %s
 
+is_persistent = bool(sbx_id)
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -198,7 +200,7 @@ try:
         out += "\nSTDERR:\n" + res.stderr
     print(f"[sandbox_id: {sbx.sandbox_id}]\n" + out)
 finally:
-    if not sbx_id:
+    if not is_persistent:
         sbx.kill()
 `, escapePyString(command), escapePyString(sandboxID))
 
@@ -249,6 +251,7 @@ import base64
 from e2b_desktop import Sandbox
 
 sbx_id = %s
+is_persistent = bool(sbx_id)
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -264,7 +267,7 @@ try:
     b64_str = base64.b64encode(shot_bytes).decode('utf-8')
     print(f"[sandbox_id: {sbx.sandbox_id}]\nDesktop Screenshot Captured!\nLive Stream URL: {vnc_url}\nBase64 Length: {len(b64_str)}\nData Prefix: data:image/png;base64,{b64_str[:100]}...")
 finally:
-    if not sbx_id:
+    if not is_persistent:
         sbx.kill()
 `, escapePyString(sandboxID))
 
@@ -340,6 +343,7 @@ func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool 
 from e2b_desktop import Sandbox
 
 sbx_id = %s
+is_persistent = bool(sbx_id)
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -360,7 +364,7 @@ try:
         sbx.left_click(%d, %d)
     print(f"[sandbox_id: {sbx.sandbox_id}]\nSuccessfully executed {act} click at ({%d}, {%d})")
 finally:
-    if not sbx_id:
+    if not is_persistent:
         sbx.kill()
 `, escapePyString(sandboxID), action, x, y, x, y, x, y, x, y, x, y)
 
@@ -423,6 +427,7 @@ text_to_type = %s
 key_to_press = %s
 sbx_id = %s
 
+is_persistent = bool(sbx_id)
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -438,7 +443,7 @@ try:
         sbx.press(key_to_press)
     print(f"[sandbox_id: {sbx.sandbox_id}]\nDesktop typing action executed successfully.")
 finally:
-    if not sbx_id:
+    if not is_persistent:
         sbx.kill()
 `, escapePyString(text), escapePyString(key), escapePyString(sandboxID))
 
@@ -499,6 +504,7 @@ from e2b import Sandbox
 path = %s
 sbx_id = %s
 
+is_persistent = bool(sbx_id)
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -511,7 +517,7 @@ try:
     content = sbx.files.read(path)
     print(f"[sandbox_id: {sbx.sandbox_id}]\n" + str(content))
 finally:
-    if not sbx_id:
+    if not is_persistent:
         sbx.kill()
 `, escapePyString(path), escapePyString(sandboxID))
 
@@ -581,6 +587,7 @@ path = %s
 content = %s
 sbx_id = %s
 
+is_persistent = bool(sbx_id)
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -593,7 +600,7 @@ try:
     sbx.files.write(path, content)
     print(f"[sandbox_id: {sbx.sandbox_id}]\nFile successfully written to {path}")
 finally:
-    if not sbx_id:
+    if not is_persistent:
         sbx.kill()
 `, escapePyString(path), escapePyString(content), escapePyString(sandboxID))
 
@@ -653,6 +660,7 @@ from e2b import Sandbox
 path = %s
 sbx_id = %s
 
+is_persistent = bool(sbx_id)
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -666,7 +674,7 @@ try:
     res = [f"{f.name} ({'dir' if f.is_dir else 'file'})" for f in files]
     print(f"[sandbox_id: {sbx.sandbox_id}]\n" + "\n".join(res))
 finally:
-    if not sbx_id:
+    if not is_persistent:
         sbx.kill()
 `, escapePyString(path), escapePyString(sandboxID))
 
