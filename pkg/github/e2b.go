@@ -55,13 +55,13 @@ func runE2BPythonScript(apiKey, pyCode string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-// 1. E2BRunCode: Code Interpreter execution (supports persistent sandbox_id)
+// 1. E2BRunCode: Code Interpreter execution (supports persistent sandbox_id / keep_alive)
 func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_run_code",
-			Description: t("TOOL_E2B_RUN_CODE_DESCRIPTION", "Run Python code inside official E2B Code Interpreter cloud sandbox. Pass optional 'sandbox_id' to re-use an existing persistent sandbox session."),
+			Description: t("TOOL_E2B_RUN_CODE_DESCRIPTION", "Run Python code inside official E2B Code Interpreter cloud sandbox. Set 'keep_alive': true or pass 'sandbox_id' for multi-step persistent sessions."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_RUN_CODE_TITLE", "Run Code in E2B Sandbox"),
 			},
@@ -75,6 +75,10 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 					"sandbox_id": {
 						Type:        "string",
 						Description: "Optional existing E2B sandbox ID to re-use for persistent multi-step sessions",
+					},
+					"keep_alive": {
+						Type:        "boolean",
+						Description: "Set true to keep the sandbox alive for subsequent commands instead of auto-killing it",
 					},
 					"api_key": {
 						Type:        "string",
@@ -91,6 +95,7 @@ func E2BRunCode(t translations.TranslationHelperFunc) inventory.ServerTool {
 				return utils.NewToolResultError(err.Error()), nil, nil
 			}
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
+			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
@@ -101,8 +106,9 @@ from e2b_code_interpreter import Sandbox
 
 code_to_run = %s
 sbx_id = %s
+keep_alive = %t
 
-is_persistent = bool(sbx_id)
+is_persistent = bool(sbx_id) or keep_alive
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -125,7 +131,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(code), escapePyString(sandboxID))
+`, escapePyString(code), escapePyString(sandboxID), keepAlive)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -137,13 +143,13 @@ finally:
 	)
 }
 
-// 2. E2BRunCommand: Terminal command execution (supports persistent sandbox_id)
+// 2. E2BRunCommand: Terminal command execution (supports persistent sandbox_id / keep_alive)
 func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_run_command",
-			Description: t("TOOL_E2B_RUN_COMMAND_DESCRIPTION", "Run terminal commands inside an E2B cloud sandbox. Pass optional 'sandbox_id' to re-use an existing persistent sandbox session."),
+			Description: t("TOOL_E2B_RUN_COMMAND_DESCRIPTION", "Run terminal commands inside an E2B cloud sandbox. Set 'keep_alive': true or pass 'sandbox_id' for multi-step persistent sessions."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_RUN_COMMAND_TITLE", "Run Command in E2B"),
 			},
@@ -157,6 +163,10 @@ func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 					"sandbox_id": {
 						Type:        "string",
 						Description: "Optional existing E2B sandbox ID for persistent multi-command sessions",
+					},
+					"keep_alive": {
+						Type:        "boolean",
+						Description: "Set true to keep the sandbox alive for subsequent commands instead of auto-killing it",
 					},
 					"api_key": {
 						Type:        "string",
@@ -173,6 +183,7 @@ func E2BRunCommand(t translations.TranslationHelperFunc) inventory.ServerTool {
 				return utils.NewToolResultError(err.Error()), nil, nil
 			}
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
+			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
@@ -183,8 +194,9 @@ from e2b import Sandbox
 
 cmd_to_run = %s
 sbx_id = %s
+keep_alive = %t
 
-is_persistent = bool(sbx_id)
+is_persistent = bool(sbx_id) or keep_alive
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -202,7 +214,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(command), escapePyString(sandboxID))
+`, escapePyString(command), escapePyString(sandboxID), keepAlive)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -214,13 +226,13 @@ finally:
 	)
 }
 
-// 3. E2BDesktopScreenshot: Desktop GUI screenshot (supports persistent sandbox_id)
+// 3. E2BDesktopScreenshot: Desktop GUI screenshot (supports persistent sandbox_id / keep_alive)
 func E2BDesktopScreenshot(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_desktop_screenshot",
-			Description: t("TOOL_E2B_DESKTOP_SCREENSHOT_DESCRIPTION", "Take a screenshot of the official E2B Cloud Desktop GUI (Linux XFCE). Pass optional 'sandbox_id' for persistent sessions."),
+			Description: t("TOOL_E2B_DESKTOP_SCREENSHOT_DESCRIPTION", "Take a screenshot of official E2B Cloud Desktop GUI (Linux XFCE). Set 'keep_alive': true or pass 'sandbox_id' for persistent sessions."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_DESKTOP_SCREENSHOT_TITLE", "Take E2B Desktop Screenshot"),
 			},
@@ -230,6 +242,10 @@ func E2BDesktopScreenshot(t translations.TranslationHelperFunc) inventory.Server
 					"sandbox_id": {
 						Type:        "string",
 						Description: "Optional existing E2B desktop sandbox ID",
+					},
+					"keep_alive": {
+						Type:        "boolean",
+						Description: "Set true to keep the desktop sandbox alive for subsequent clicks/actions",
 					},
 					"api_key": {
 						Type:        "string",
@@ -241,6 +257,7 @@ func E2BDesktopScreenshot(t translations.TranslationHelperFunc) inventory.Server
 		[]scopes.Scope{},
 		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
+			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
@@ -251,7 +268,9 @@ import base64
 from e2b_desktop import Sandbox
 
 sbx_id = %s
-is_persistent = bool(sbx_id)
+keep_alive = %t
+is_persistent = bool(sbx_id) or keep_alive
+
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -269,7 +288,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(sandboxID))
+`, escapePyString(sandboxID), keepAlive)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -281,13 +300,13 @@ finally:
 	)
 }
 
-// 4. E2BDesktopClick: Desktop GUI click (supports persistent sandbox_id)
+// 4. E2BDesktopClick: Desktop GUI click (supports persistent sandbox_id / keep_alive)
 func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_desktop_click",
-			Description: t("TOOL_E2B_DESKTOP_CLICK_DESCRIPTION", "Perform mouse click at (x, y) on E2B Cloud Desktop GUI. Pass optional 'sandbox_id' for persistent sessions."),
+			Description: t("TOOL_E2B_DESKTOP_CLICK_DESCRIPTION", "Perform mouse click at (x, y) on E2B Cloud Desktop GUI. Set 'keep_alive': true or pass 'sandbox_id' for persistent sessions."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_DESKTOP_CLICK_TITLE", "Click on E2B Desktop"),
 			},
@@ -309,6 +328,10 @@ func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool 
 					"sandbox_id": {
 						Type:        "string",
 						Description: "Optional existing E2B desktop sandbox ID",
+					},
+					"keep_alive": {
+						Type:        "boolean",
+						Description: "Set true to keep the desktop sandbox alive for subsequent actions",
 					},
 					"api_key": {
 						Type:        "string",
@@ -333,6 +356,7 @@ func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool 
 				action = "left"
 			}
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
+			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
@@ -343,7 +367,9 @@ func E2BDesktopClick(t translations.TranslationHelperFunc) inventory.ServerTool 
 from e2b_desktop import Sandbox
 
 sbx_id = %s
-is_persistent = bool(sbx_id)
+keep_alive = %t
+is_persistent = bool(sbx_id) or keep_alive
+
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -366,7 +392,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(sandboxID), action, x, y, x, y, x, y, x, y, x, y)
+`, escapePyString(sandboxID), keepAlive, action, x, y, x, y, x, y, x, y, x, y)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -378,13 +404,13 @@ finally:
 	)
 }
 
-// 5. E2BDesktopType: Desktop GUI type (supports persistent sandbox_id)
+// 5. E2BDesktopType: Desktop GUI type (supports persistent sandbox_id / keep_alive)
 func E2BDesktopType(t translations.TranslationHelperFunc) inventory.ServerTool {
 	return NewTool(
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_desktop_type",
-			Description: t("TOOL_E2B_DESKTOP_TYPE_DESCRIPTION", "Type text or press keys on E2B Cloud Desktop GUI. Pass optional 'sandbox_id' for persistent sessions."),
+			Description: t("TOOL_E2B_DESKTOP_TYPE_DESCRIPTION", "Type text or press keys on E2B Cloud Desktop GUI. Set 'keep_alive': true or pass 'sandbox_id' for persistent sessions."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_DESKTOP_TYPE_TITLE", "Type on E2B Desktop"),
 			},
@@ -403,6 +429,10 @@ func E2BDesktopType(t translations.TranslationHelperFunc) inventory.ServerTool {
 						Type:        "string",
 						Description: "Optional existing E2B desktop sandbox ID",
 					},
+					"keep_alive": {
+						Type:        "boolean",
+						Description: "Set true to keep the desktop sandbox alive for subsequent actions",
+					},
 					"api_key": {
 						Type:        "string",
 						Description: "Optional E2B API Key.",
@@ -415,6 +445,7 @@ func E2BDesktopType(t translations.TranslationHelperFunc) inventory.ServerTool {
 			text, _ := OptionalParam[string](args, "text")
 			key, _ := OptionalParam[string](args, "key")
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
+			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
@@ -426,8 +457,9 @@ from e2b_desktop import Sandbox
 text_to_type = %s
 key_to_press = %s
 sbx_id = %s
+keep_alive = %t
+is_persistent = bool(sbx_id) or keep_alive
 
-is_persistent = bool(sbx_id)
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -445,7 +477,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(text), escapePyString(key), escapePyString(sandboxID))
+`, escapePyString(text), escapePyString(key), escapePyString(sandboxID), keepAlive)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -463,7 +495,7 @@ func E2BReadFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_read_file",
-			Description: t("TOOL_E2B_READ_FILE_DESCRIPTION", "Read file contents from sandbox. Pass optional 'sandbox_id' for persistent sessions."),
+			Description: t("TOOL_E2B_READ_FILE_DESCRIPTION", "Read file contents from sandbox. Set 'keep_alive': true or pass 'sandbox_id' for persistent sessions."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_READ_FILE_TITLE", "Read File from E2B Sandbox"),
 			},
@@ -477,6 +509,10 @@ func E2BReadFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 					"sandbox_id": {
 						Type:        "string",
 						Description: "Optional existing E2B sandbox ID",
+					},
+					"keep_alive": {
+						Type:        "boolean",
+						Description: "Set true to keep the sandbox alive",
 					},
 					"api_key": {
 						Type:        "string",
@@ -493,6 +529,7 @@ func E2BReadFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 				return utils.NewToolResultError(err.Error()), nil, nil
 			}
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
+			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
@@ -503,8 +540,9 @@ from e2b import Sandbox
 
 path = %s
 sbx_id = %s
+keep_alive = %t
+is_persistent = bool(sbx_id) or keep_alive
 
-is_persistent = bool(sbx_id)
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -519,7 +557,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(path), escapePyString(sandboxID))
+`, escapePyString(path), escapePyString(sandboxID), keepAlive)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -537,7 +575,7 @@ func E2BWriteFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_write_file",
-			Description: t("TOOL_E2B_WRITE_FILE_DESCRIPTION", "Write text content to a file in sandbox. Pass optional 'sandbox_id' for persistent sessions."),
+			Description: t("TOOL_E2B_WRITE_FILE_DESCRIPTION", "Write text content to a file in sandbox. Set 'keep_alive': true or pass 'sandbox_id' for persistent sessions."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_WRITE_FILE_TITLE", "Write File in E2B Sandbox"),
 			},
@@ -555,6 +593,10 @@ func E2BWriteFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 					"sandbox_id": {
 						Type:        "string",
 						Description: "Optional existing E2B sandbox ID",
+					},
+					"keep_alive": {
+						Type:        "boolean",
+						Description: "Set true to keep the sandbox alive",
 					},
 					"api_key": {
 						Type:        "string",
@@ -575,6 +617,7 @@ func E2BWriteFile(t translations.TranslationHelperFunc) inventory.ServerTool {
 				return utils.NewToolResultError(err.Error()), nil, nil
 			}
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
+			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
@@ -586,8 +629,9 @@ from e2b import Sandbox
 path = %s
 content = %s
 sbx_id = %s
+keep_alive = %t
+is_persistent = bool(sbx_id) or keep_alive
 
-is_persistent = bool(sbx_id)
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -602,7 +646,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(path), escapePyString(content), escapePyString(sandboxID))
+`, escapePyString(path), escapePyString(content), escapePyString(sandboxID), keepAlive)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
@@ -620,7 +664,7 @@ func E2BListDir(t translations.TranslationHelperFunc) inventory.ServerTool {
 		ToolsetMetadataE2B,
 		mcp.Tool{
 			Name:        "e2b_list_dir",
-			Description: t("TOOL_E2B_LIST_DIR_DESCRIPTION", "List files and directory contents inside sandbox. Pass optional 'sandbox_id' for persistent sessions."),
+			Description: t("TOOL_E2B_LIST_DIR_DESCRIPTION", "List files and directory contents inside sandbox. Set 'keep_alive': true or pass 'sandbox_id' for persistent sessions."),
 			Annotations: &mcp.ToolAnnotations{
 				Title: t("TOOL_E2B_LIST_DIR_TITLE", "List Directory in E2B Sandbox"),
 			},
@@ -634,6 +678,10 @@ func E2BListDir(t translations.TranslationHelperFunc) inventory.ServerTool {
 					"sandbox_id": {
 						Type:        "string",
 						Description: "Optional existing E2B sandbox ID",
+					},
+					"keep_alive": {
+						Type:        "boolean",
+						Description: "Set true to keep the sandbox alive",
 					},
 					"api_key": {
 						Type:        "string",
@@ -649,6 +697,7 @@ func E2BListDir(t translations.TranslationHelperFunc) inventory.ServerTool {
 				path = "/home/user"
 			}
 			sandboxID, _ := OptionalParam[string](args, "sandbox_id")
+			keepAlive, _ := OptionalParam[bool](args, "keep_alive")
 			apiKey := getE2BAPIKey(args)
 			if apiKey == "" {
 				return utils.NewToolResultError("E2B API Key is missing."), nil, nil
@@ -659,8 +708,9 @@ from e2b import Sandbox
 
 path = %s
 sbx_id = %s
+keep_alive = %t
+is_persistent = bool(sbx_id) or keep_alive
 
-is_persistent = bool(sbx_id)
 if sbx_id:
     try:
         sbx = Sandbox.connect(sbx_id)
@@ -676,7 +726,7 @@ try:
 finally:
     if not is_persistent:
         sbx.kill()
-`, escapePyString(path), escapePyString(sandboxID))
+`, escapePyString(path), escapePyString(sandboxID), keepAlive)
 
 			output, err := runE2BPythonScript(apiKey, pyScript)
 			if err != nil {
