@@ -94,12 +94,32 @@ func handleFailedJobLogs(ctx context.Context, client *github.Client, owner, repo
 		}
 	}
 
+	// Surface the run's own lifecycle state. A run that is still queued or in
+	// progress has no failed jobs *yet*, which is indistinguishable from a
+	// genuinely clean run unless the run status is reported alongside.
+	runStatus, runConclusion := "", ""
+	if run, runResp, runErr := client.Actions.GetWorkflowRunByID(ctx, owner, repo, runID); runErr == nil {
+		runStatus = run.GetStatus()
+		runConclusion = run.GetConclusion()
+		if runResp != nil && runResp.Body != nil {
+			_ = runResp.Body.Close()
+		}
+	}
+	runCompleted := runStatus == "" || runStatus == "completed"
+
 	if len(failedJobs) == 0 {
+		message := "No failed jobs found in this workflow run"
+		if !runCompleted {
+			message = fmt.Sprintf("Workflow run is not finished yet (status: %s). No failed jobs so far, but this is NOT conclusive until run_status is 'completed'.", runStatus)
+		}
 		result := map[string]any{
-			"message":     "No failed jobs found in this workflow run",
-			"run_id":      runID,
-			"total_jobs":  len(jobs.Jobs),
-			"failed_jobs": 0,
+			"message":        message,
+			"run_id":         runID,
+			"run_status":     runStatus,
+			"run_conclusion": runConclusion,
+			"run_completed":  runCompleted,
+			"total_jobs":     len(jobs.Jobs),
+			"failed_jobs":    0,
 		}
 		r, _ := json.Marshal(result)
 		return utils.NewToolResultText(string(r)), nil, nil
@@ -124,12 +144,15 @@ func handleFailedJobLogs(ctx context.Context, client *github.Client, owner, repo
 	}
 
 	result := map[string]any{
-		"message":       fmt.Sprintf("Retrieved logs for %d failed jobs", len(failedJobs)),
-		"run_id":        runID,
-		"total_jobs":    len(jobs.Jobs),
-		"failed_jobs":   len(failedJobs),
-		"logs":          logResults,
-		"return_format": map[string]bool{"content": returnContent, "urls": !returnContent},
+		"message":        fmt.Sprintf("Retrieved logs for %d failed jobs", len(failedJobs)),
+		"run_id":         runID,
+		"run_status":     runStatus,
+		"run_conclusion": runConclusion,
+		"run_completed":  runCompleted,
+		"total_jobs":     len(jobs.Jobs),
+		"failed_jobs":    len(failedJobs),
+		"logs":           logResults,
+		"return_format":  map[string]bool{"content": returnContent, "urls": !returnContent},
 	}
 
 	r, err := json.Marshal(result)
@@ -421,6 +444,13 @@ Use this tool to list workflows in a repository, or list workflow runs, jobs, an
 			pagination, err := OptionalPaginationParams(args)
 			if err != nil {
 				return utils.NewToolResultError(err.Error()), nil, nil
+			}
+
+			// This tool's schema documents "per_page", but
+			// OptionalPaginationParams reads "perPage". Accept the documented
+			// spelling too, otherwise it is silently ignored.
+			if perPage, perPageErr := OptionalParam[float64](args, "per_page"); perPageErr == nil && perPage > 0 {
+				pagination.PerPage = int(perPage)
 			}
 
 			client, err := deps.GetClient(ctx)
